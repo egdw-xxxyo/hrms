@@ -12,6 +12,8 @@
   "employee",
   "employee_name",
   "working_hours",
+  "overtime_hours",
+  "shortfall_hours",
   "status",
   "leave_type",
   "leave_application",
@@ -78,6 +80,20 @@
    "label": "Working Hours",
    "precision": "2",
    "read_only": 1
+  },
+  {
+   "fieldname": "overtime_hours",
+   "fieldtype": "Float",
+   "label": "Overtime Hours",
+   "non_negative": 1,
+   "precision": "2"
+  },
+  {
+   "fieldname": "shortfall_hours",
+   "fieldtype": "Float",
+   "label": "Shortfall Hours",
+   "non_negative": 1,
+   "precision": "2"
   },
   {
    "default": "Present",
