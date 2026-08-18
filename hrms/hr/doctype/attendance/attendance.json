@@ -104,7 +104,7 @@
    "no_copy": 1,
    "oldfieldname": "status",
    "oldfieldtype": "Select",
-   "options": "\nPresent\nAbsent\nOn Leave\nHalf Day\nWork From Home",
+   "options": "\nPresent\nAbsent\nSick Leave\nOn Leave\nHalf Day\nWork From Home",
    "reqd": 1,
    "search_index": 1
   },

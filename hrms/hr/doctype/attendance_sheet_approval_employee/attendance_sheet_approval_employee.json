@@ -10,6 +10,7 @@
   "employee_name",
   "total_present",
   "total_leave",
+  "total_sick",
   "total_absent",
   "overtime_hours",
   "shortfall_hours"
@@ -49,6 +50,15 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Leave",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "total_sick",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Sick Leave",
    "precision": "2",
    "read_only": 1
   },

@@ -3,10 +3,10 @@
 
 """Server side of the Attendance Sheet page.
 
-The page is open to everyone: what a user may do is decided here, by who reports to
-them, and not by the roles on the page or on Attendance. Every method that writes
-therefore checks the employee against `get_editable_employees` before it touches a
-document, because the write itself runs with permissions ignored.
+The page is open to everyone, and the reporting line is the only thing that decides
+what a user may do with it: no role widens it and none is required. Every method that
+writes therefore checks the employee against `get_editable_employees` before it touches
+a document, because the write itself runs with permissions ignored.
 """
 
 import frappe
@@ -19,15 +19,9 @@ from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import 
 )
 from hrms.utils import get_date_range
 
-HR_ROLES = ("HR User", "HR Manager", "System Manager")
-
 MAX_PERIOD_DAYS = 90
 
-ATTENDANCE_STATUSES = ("Present", "Work From Home", "Half Day", "Absent")
-
-
-def has_hr_access() -> bool:
-	return bool(set(HR_ROLES) & set(frappe.get_roles()))
+ATTENDANCE_STATUSES = ("Present", "Work From Home", "Half Day", "Absent", "Sick Leave")
 
 
 def get_session_employee() -> str | None:
@@ -37,18 +31,17 @@ def get_session_employee() -> str | None:
 def get_editable_employees(company: str | None = None) -> dict[str, dict]:
 	"""Returns the employees the current user may fill the sheet for.
 
-	HR sees the whole company. Everyone else sees their direct reports only: one level
-	of `reports_to`, without themselves, so nobody fills their own timesheet.
+	The direct reports of the employee the session user is linked to, one level of
+	`reports_to`, and nothing else. Roles grant nothing here on purpose: an HR manager
+	or an administrator without reports gets an empty sheet, exactly like anybody else.
 	"""
-	filters = {"status": "Active"}
+	own = get_session_employee()
+	if not own:
+		return {}
+
+	filters = {"status": "Active", "reports_to": own}
 	if company:
 		filters["company"] = company
-
-	if not has_hr_access():
-		manager = get_session_employee()
-		if not manager:
-			return {}
-		filters["reports_to"] = manager
 
 	employees = frappe.get_all(
 		"Employee",
@@ -138,7 +131,7 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 		"employees": rows,
 		"dates": [cstr(d) for d in dates],
 		"can_approve": bool(manager),
-		"approval": get_approval(manager, from_date, to_date),
+		"approval": get_approval(manager, company, from_date, to_date),
 	}
 
 
@@ -287,13 +280,24 @@ def get_lock_map(employees: list[str], from_date, to_date) -> dict:
 	return locks
 
 
-def get_approval(manager: str | None, from_date, to_date) -> dict | None:
+def get_approval(manager: str | None, company: str, from_date, to_date) -> dict | None:
+	"""The sheet this manager has already handed over for this period.
+
+	Keyed by company as well: a manager whose reports sit in more than one of them
+	approves each separately, and the state of one says nothing about the other.
+	"""
 	if not manager:
 		return None
 
 	approval = frappe.db.get_value(
 		"Attendance Sheet Approval",
-		{"manager": manager, "from_date": from_date, "to_date": to_date, "docstatus": 1},
+		{
+			"manager": manager,
+			"company": company,
+			"from_date": from_date,
+			"to_date": to_date,
+			"docstatus": 1,
+		},
 		["name", "creation"],
 		as_dict=True,
 	)
@@ -541,6 +545,95 @@ def cancel_leave(name: str) -> None:
 
 
 @frappe.whitelist()
+def clear_range(employees, from_date: str, to_date: str, company: str | None = None) -> dict:
+	"""Removes what the sheet holds over a period, for one employee or for a whole column.
+
+	A leave that reaches beyond the period is kept: the selection says nothing about the
+	days outside it, and dropping the application would take those days along with it.
+	"""
+	employees = frappe.parse_json(employees) if isinstance(employees, str) else employees
+	from_date, to_date = validate_period(from_date, to_date)
+	assert_can_edit(employees, company)
+
+	deleted = 0
+	skipped = []
+	kept_leaves = set()
+
+	for leave in frappe.get_all(
+		"Leave Application",
+		filters={
+			"docstatus": ("<", 2),
+			"employee": ("in", employees),
+			"from_date": ("<=", to_date),
+			"to_date": (">=", from_date),
+		},
+		fields=["name", "employee", "from_date", "to_date"],
+		ignore_permissions=True,
+	):
+		if getdate(leave.from_date) < from_date or getdate(leave.to_date) > to_date:
+			kept_leaves.add(leave.name)
+			skipped.append(
+				{
+					"employee": leave.employee,
+					"date": f"{formatdate(leave.from_date)} — {formatdate(leave.to_date)}",
+					"reason": _("The leave reaches outside the selected period"),
+				}
+			)
+			continue
+
+		result = remove_document(cancel_leave, leave.name, leave.employee, leave.from_date)
+		deleted, skipped = count_removal(result, deleted, skipped)
+
+	for record in frappe.get_all(
+		"Attendance",
+		filters={
+			"docstatus": ("<", 2),
+			"employee": ("in", employees),
+			"attendance_date": ("between", [from_date, to_date]),
+		},
+		fields=["name", "employee", "attendance_date", "leave_application"],
+		ignore_permissions=True,
+	):
+		# the day of a leave that stays would otherwise lose the record behind it
+		if record.leave_application in kept_leaves:
+			continue
+
+		result = remove_document(drop_attendance, record.name, record.employee, record.attendance_date)
+		deleted, skipped = count_removal(result, deleted, skipped)
+
+	return {"deleted": deleted, "skipped": skipped}
+
+
+def remove_document(remove, name: str, employee: str, day) -> dict:
+	"""Drops one document, so that a refusal costs its own record and not the batch."""
+	save_point = "clear_attendance_range"
+	frappe.db.savepoint(save_point)
+
+	try:
+		validate_not_approved(employee, getdate(day))
+		remove(name)
+
+		frappe.db.release_savepoint(save_point)
+		return {}
+	except Exception as e:
+		frappe.db.rollback(save_point=save_point)
+		skipped = {
+			"employee": employee,
+			"date": formatdate(day),
+			"reason": get_failure_reason(e),
+		}
+		frappe.clear_messages()
+		return {"skipped": skipped}
+
+
+def count_removal(result: dict, deleted: int, skipped: list) -> tuple:
+	if result.get("skipped"):
+		return deleted, [*skipped, result["skipped"]]
+
+	return deleted + 1, skipped
+
+
+@frappe.whitelist()
 def approve_sheet(company: str, from_date: str, to_date: str) -> dict:
 	"""Freezes the period and stores the totals that go to the accounting."""
 	from_date, to_date = validate_period(from_date, to_date)
@@ -575,10 +668,11 @@ def approve_sheet(company: str, from_date: str, to_date: str) -> dict:
 
 
 def get_totals(cells) -> dict:
-	"""The five numbers of the summarized view, for one employee."""
+	"""The numbers of the summarized view, for one employee."""
 	totals = {
 		"total_present": 0.0,
 		"total_leave": 0.0,
+		"total_sick": 0.0,
 		"total_absent": 0.0,
 		"overtime_hours": 0.0,
 		"shortfall_hours": 0.0,
@@ -591,6 +685,8 @@ def get_totals(cells) -> dict:
 			totals["total_present"] += 1
 		elif status == "On Leave":
 			totals["total_leave"] += 1
+		elif status == "Sick Leave":
+			totals["total_sick"] += 1
 		elif status == "Absent":
 			totals["total_absent"] += 1
 		elif status == "Half Day":
@@ -608,7 +704,7 @@ def get_totals(cells) -> dict:
 def cancel_approval(name: str) -> None:
 	doc = frappe.get_doc("Attendance Sheet Approval", name)
 
-	if doc.manager != get_session_employee() and not has_hr_access():
+	if doc.manager != get_session_employee():
 		frappe.throw(_("Only {0} can reopen this period").format(doc.manager), frappe.PermissionError)
 
 	doc.flags.ignore_permissions = True

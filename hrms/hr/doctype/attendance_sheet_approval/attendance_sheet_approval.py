@@ -17,14 +17,19 @@ class AttendanceSheetApproval(Document):
 			frappe.throw(_("From Date cannot be after To Date"))
 
 	def validate_overlap(self):
-		"""A period may only be approved once: a second sheet over the same days would
-		leave it unclear which of the two the payroll is supposed to read."""
+		"""A period may only be approved once per company: a second sheet over the same
+		days would leave it unclear which of the two the payroll is supposed to read.
+
+		Companies are counted apart, since a manager may report over employees of more
+		than one and hands each of them over on its own.
+		"""
 		overlapping = frappe.db.get_value(
 			"Attendance Sheet Approval",
 			{
 				"name": ("!=", self.name),
 				"docstatus": 1,
 				"manager": self.manager,
+				"company": self.company,
 				"from_date": ("<=", self.to_date),
 				"to_date": (">=", self.from_date),
 			},
@@ -32,8 +37,8 @@ class AttendanceSheetApproval(Document):
 
 		if overlapping:
 			frappe.throw(
-				_("{0} already covers a part of this period").format(
-					get_link_to_form("Attendance Sheet Approval", overlapping)
+				_("{0} already covers a part of this period for {1}").format(
+					get_link_to_form("Attendance Sheet Approval", overlapping), self.company
 				),
 				title=_("Period Already Approved"),
 			)

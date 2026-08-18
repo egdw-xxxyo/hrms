@@ -7,27 +7,35 @@ const ABBR_CONTEXT = "Attendance Sheet Abbreviation";
 
 const DAY_CONTEXT = "Day of Week Abbreviation";
 
+// "Leave" on its own reads as the verb in several languages
+const LEAVE_CONTEXT = "Attendance Sheet";
+
 // keyed by the untranslated status, since the cell text is localized
 const STATUS_META = {
 	Present: { abbr: "P", color: "green" },
 	"Work From Home": { abbr: "WFH", color: "green" },
 	Absent: { abbr: "A", color: "red" },
+	"Sick Leave": { abbr: "SL", color: "#8B5CF6" },
 	"Half Day": { abbr: "HD", color: "orange" },
 	"On Leave": { abbr: "L", color: "#3187D8" },
 	Holiday: { abbr: "H", color: "#878787" },
 	"Weekly Off": { abbr: "WO", color: "#878787" },
 };
 
-const ATTENDANCE_STATUSES = ["Present", "Work From Home", "Half Day", "Absent"];
+const ATTENDANCE_STATUSES = ["Present", "Work From Home", "Half Day", "Absent", "Sick Leave"];
 
 // the statuses worth a single click on a whole day, the rest go through the dialog
-const QUICK_STATUSES = ["Present", "Work From Home", "Absent"];
+const QUICK_STATUSES = ["Present", "Work From Home", "Absent", "Sick Leave"];
 
 const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const MENU_CLASS = "attendance-sheet-menu";
 
 const STYLE_ID = "attendance-sheet-styles";
+
+// the menu lives on document.body, outside any one sheet: whoever opened it says
+// here what to undo once it goes away
+let menu_on_close = null;
 
 frappe.pages["attendance-sheet"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -76,7 +84,9 @@ class AttendanceSheet {
 			fieldtype: "Select",
 			fieldname: "year",
 			label: __("Year"),
-			options: Array.from({ length: 5 }, (_, offset) => String(today.getFullYear() - offset)),
+			options: Array.from({ length: 5 }, (_, offset) =>
+				String(today.getFullYear() - offset),
+			),
 			default: String(today.getFullYear()),
 			change: () => this.refresh(),
 		});
@@ -103,16 +113,22 @@ class AttendanceSheet {
 
 	make_body() {
 		this.$container = $('<div class="attendance-sheet-container"></div>').appendTo(
-			this.page.main
+			this.page.main,
 		);
-		this.$table = $('<div class="attendance-sheet-table"></div>').appendTo(this.$container);
 		this.$legend = $('<div class="attendance-sheet-legend"></div>').appendTo(this.$container);
+		this.$table = $('<div class="attendance-sheet-table"></div>').appendTo(this.$container);
 	}
 
 	bind_events() {
 		this.$table.on("mousedown", "td.day", (e) => this.start_selection(e));
 		this.$table.on("mouseover", "td.day", (e) => this.extend_selection(e));
-		this.$table.on("click", "th.day", (e) => this.open_column_menu(e));
+
+		// the header drags the same way, only it covers every row at once
+		this.$table.on("mousedown", "th.day", (e) => this.start_column_selection(e));
+		this.$table.on("mouseover", "th.day", (e) => this.extend_column_selection(e));
+
+		this.$table.on("mouseenter", "td.day", (e) => this.paint_related(e.currentTarget));
+		this.$table.on("mouseleave", "td.day", () => this.clear_related());
 
 		// the release may happen anywhere, a drag that leaves the table still ends here
 		$(document).on("mouseup.attendance-sheet", (e) => this.finish_selection(e));
@@ -170,20 +186,24 @@ class AttendanceSheet {
 	// --------------------------------------------------------------- render
 
 	render() {
+		// the table is rebuilt from scratch, so any live selection points at nodes
+		// that are about to be dropped
+		this.selection = null;
+
 		this.render_actions();
 		this.render_legend();
 
 		if (!this.sheet || !this.sheet.employees.length) {
 			this.$table.html(
 				`<div class="text-muted attendance-sheet-empty">${__(
-					"You have no direct reports to fill the timesheet for"
-				)}</div>`
+					"You have no direct reports to fill the timesheet for",
+				)}</div>`,
 			);
 			return;
 		}
 
 		this.$table.html(
-			this.summarized.get_value() ? this.get_summary_html() : this.get_sheet_html()
+			this.summarized.get_value() ? this.get_summary_html() : this.get_sheet_html(),
 		);
 	}
 
@@ -211,7 +231,7 @@ class AttendanceSheet {
 			(status) => `
 				<span class="attendance-sheet-legend-item" style="border-left-color:${STATUS_META[status].color}">
 					${__(status)} - ${get_abbr(status)}
-				</span>`
+				</span>`,
 		);
 
 		entries.push(`
@@ -234,9 +254,9 @@ class AttendanceSheet {
 			.map(
 				(row) => `
 					<tr data-employee="${row.employee}">
-						<td class="employee">${frappe.utils.escape_html(row.employee_name)}</td>
+						${get_employee_html(row)}
 						${this.sheet.dates.map((date) => get_cell_html(row, date)).join("")}
-					</tr>`
+					</tr>`,
 			)
 			.join("");
 
@@ -253,6 +273,7 @@ class AttendanceSheet {
 			__("Employee"),
 			__("Present Days"),
 			__("Leave Days"),
+			__("Sick Days"),
 			__("Absent Days"),
 			__("Overtime Hours"),
 			__("Shortfall Hours"),
@@ -263,9 +284,10 @@ class AttendanceSheet {
 				const totals = get_totals(row);
 				return `
 					<tr>
-						<td class="employee">${frappe.utils.escape_html(row.employee_name)}</td>
+						${get_employee_html(row)}
 						<td class="number">${totals.present}</td>
 						<td class="number">${totals.leave}</td>
+						<td class="number">${totals.sick}</td>
 						<td class="number">${totals.absent}</td>
 						<td class="number">${totals.overtime}</td>
 						<td class="number">${totals.shortfall}</td>
@@ -276,7 +298,10 @@ class AttendanceSheet {
 		return `
 			<table class="attendance-sheet attendance-sheet--summary">
 				<thead><tr>${columns
-					.map((label, index) => `<th class="${index ? "number" : "employee"}">${label}</th>`)
+					.map(
+						(label, index) =>
+							`<th class="${index ? "number" : "employee"}">${label}</th>`,
+					)
 					.join("")}</tr></thead>
 				<tbody>${body}</tbody>
 			</table>`;
@@ -289,156 +314,247 @@ class AttendanceSheet {
 		return row ? row.days[date] : null;
 	}
 
+	// a cell is addressed by its place in the grid, so a drag can span rows as well
+	// as days and the header is just a drag that covers every row
+	get_position(cell) {
+		return {
+			row: this.sheet.employees.findIndex((row) => row.employee === cell.dataset.employee),
+			column: this.sheet.dates.indexOf(cell.dataset.date),
+		};
+	}
+
+	get bounds() {
+		const { anchor, focus } = this.selection;
+		const [top, bottom] = [anchor.row, focus.row].sort((a, b) => a - b);
+		const [left, right] = [anchor.column, focus.column].sort((a, b) => a - b);
+
+		return { top, bottom, left, right };
+	}
+
 	start_selection(e) {
 		if (e.button !== 0 || this.is_locked) return;
 
 		e.preventDefault();
 		close_menu();
 
-		const $cell = $(e.currentTarget);
-		const $cells = $cell.closest("tr").find("td.day");
-		const index = $cells.index($cell);
-
-		this.selection = { $cells, anchor: index, focus: index, dragging: true };
+		const position = this.get_position(e.currentTarget);
+		this.selection = { anchor: position, focus: position, dragging: true, columns: false };
 		this.paint_selection();
 	}
 
 	extend_selection(e) {
-		if (!this.selection || !this.selection.dragging) return;
+		if (!this.selection || !this.selection.dragging || this.selection.columns) return;
 
-		const index = this.selection.$cells.index(e.currentTarget);
-		if (index === -1) return;
+		this.selection.focus = this.get_position(e.currentTarget);
+		this.paint_selection();
+	}
 
-		this.selection.focus = index;
+	start_column_selection(e) {
+		if (e.button !== 0 || this.is_locked || this.summarized.get_value()) return;
+
+		e.preventDefault();
+		close_menu();
+
+		const column = this.sheet.dates.indexOf(e.currentTarget.dataset.date);
+		this.selection = {
+			anchor: { row: 0, column },
+			focus: { row: this.sheet.employees.length - 1, column },
+			dragging: true,
+			columns: true,
+		};
+		this.paint_selection();
+	}
+
+	extend_column_selection(e) {
+		if (!this.selection || !this.selection.dragging || !this.selection.columns) return;
+
+		const column = this.sheet.dates.indexOf(e.currentTarget.dataset.date);
+		if (column === -1) return;
+
+		this.selection.focus = { row: this.sheet.employees.length - 1, column };
 		this.paint_selection();
 	}
 
 	finish_selection(e) {
 		if (!this.selection || !this.selection.dragging) return;
 
-		const cells = this.get_selected_cells();
-		this.clear_selection();
+		// the drag is over, but the rectangle stays painted: it is what the menu about
+		// to open acts on, and it is cleared when that menu closes
+		this.selection.dragging = false;
 
-		if (!cells.length) return;
+		const { employees, dates } = this.get_selection();
+		if (!employees.length || !dates.length) return this.clear_selection();
 
-		const single = cells.length === 1 ? this.get_cell(cells[0].employee, cells[0].date) : null;
-
-		if (single && (single.attendance || single.leave_application))
-			this.open_cell_menu(e, cells[0], single);
-		else this.open_create_menu(e, cells);
+		if (!this.open_selection_menu(e, employees, dates)) this.clear_selection();
 	}
 
-	get_selected_cells() {
-		const [start, end] = [this.selection.anchor, this.selection.focus].sort((a, b) => a - b);
+	get_selection() {
+		const { top, bottom, left, right } = this.bounds;
 
-		return this.selection.$cells
-			.slice(start, end + 1)
-			.map((_i, cell) => ({ employee: cell.dataset.employee, date: cell.dataset.date }))
-			.get();
+		return {
+			employees: this.sheet.employees.slice(top, bottom + 1).map((row) => row.employee),
+			dates: this.sheet.dates.slice(left, right + 1),
+		};
 	}
 
 	paint_selection() {
-		const [start, end] = [this.selection.anchor, this.selection.focus].sort((a, b) => a - b);
-		this.selection.$cells.each((index, cell) =>
-			cell.classList.toggle("selected", index >= start && index <= end)
-		);
+		const { top, bottom, left, right } = this.bounds;
+
+		// the braces matter: jQuery stops iterating on a callback that returns false,
+		// and classList.toggle answers with whether the class ended up set
+		this.$table.find("td.day").each((_index, cell) => {
+			const { row, column } = this.get_position(cell);
+			cell.classList.toggle(
+				"selected",
+				row >= top && row <= bottom && column >= left && column <= right,
+			);
+		});
+
+		this.$table.find("th.day").each((_index, header) => {
+			const column = this.sheet.dates.indexOf(header.dataset.date);
+			header.classList.toggle(
+				"selected",
+				this.selection.columns && column >= left && column <= right,
+			);
+		});
 	}
 
 	clear_selection() {
-		this.selection && this.selection.$cells.removeClass("selected");
+		if (!this.selection) return;
+
+		this.$table.find(".selected").removeClass("selected");
 		this.selection = null;
+	}
+
+	// ------------------------------------------------------------- related
+
+	paint_related(cell) {
+		// a drag is already painting; two highlights at once only muddle the range
+		if (this.selection && this.selection.dragging) return;
+
+		const group = cell.dataset.group;
+		if (!group) return;
+
+		this.$table.find(`td.day[data-group="${CSS.escape(group)}"]`).addClass("related");
+	}
+
+	clear_related() {
+		this.$table.find("td.day.related").removeClass("related");
 	}
 
 	// ---------------------------------------------------------------- menus
 
-	open_cell_menu(event, { employee, date }, cell) {
-		if (cell.locked) {
-			frappe.show_alert({
-				message: __("This period was already approved"),
-				indicator: "orange",
-			});
-			return;
-		}
-
-		// a day that belongs to a leave is managed through the leave, even when the
-		// attendance behind it is what the sheet reads
-		const is_leave = !!cell.leave_application;
-
-		show_menu(event, [
-			{
-				label: __("Edit"),
-				onclick: () =>
-					is_leave
-						? this.open_leave_dialog({ employee, name: cell.leave_application })
-						: this.open_attendance_dialog({
-								employees: [employee],
-								from_date: date,
-								to_date: date,
-								cell,
-						  }),
-			},
-			{
-				label: __("Delete"),
-				onclick: () => this.delete_cell(cell, is_leave),
-			},
-		]);
-	}
-
-	open_create_menu(event, cells) {
-		const employees = [...new Set(cells.map((cell) => cell.employee))];
-		const dates = cells.map((cell) => cell.date).sort();
+	/** One menu for every selection: a day of one employee and a month of the whole
+	 * team differ only in what the same entries are applied to. */
+	open_selection_menu(event, employees, dates) {
 		const period = { from_date: dates[0], to_date: dates[dates.length - 1] };
+		const cell =
+			employees.length === 1 && dates.length === 1
+				? this.get_cell(employees[0], dates[0])
+				: null;
 
-		const items = [
-			{
-				label: __("Attendance"),
-				onclick: () => this.open_attendance_dialog({ employees, ...period }),
-			},
-		];
-
-		// a leave application belongs to one employee, a whole column cannot be one
-		if (employees.length === 1)
-			items.push({
-				label: __("Leave Application"),
-				onclick: () => this.open_leave_dialog({ employee: employees[0], ...period }),
-			});
-
-		show_menu(event, items);
-	}
-
-	open_column_menu(e) {
-		if (this.is_locked || this.summarized.get_value()) return;
-
-		const date = e.currentTarget.dataset.date;
-		const employees = this.sheet.employees.map((row) => row.employee);
+		// an approved day is read-only, but its documents stay reachable
+		if (cell && cell.locked)
+			return show_menu(event, this.get_document_items(cell), () => this.clear_selection());
 
 		const items = QUICK_STATUSES.map((status) => ({
 			label: __(status),
-			onclick: () =>
-				this.save_attendance({ employees, from_date: date, to_date: date, status }),
+			onclick: () => this.save_attendance({ employees, ...period, status }),
 		}));
 
 		items.push({
 			label: __("More Options") + "…",
-			onclick: () =>
-				this.open_attendance_dialog({ employees, from_date: date, to_date: date }),
+			onclick: () => this.open_attendance_dialog({ employees, ...period, cell }),
 		});
 
-		show_menu(e, items);
+		// a leave application belongs to one employee, a whole column cannot be one
+		if (employees.length === 1)
+			items.push({
+				label: __("Leave", null, LEAVE_CONTEXT),
+				onclick: () =>
+					this.open_leave_dialog({
+						employee: employees[0],
+						name: cell && cell.leave_application,
+						...period,
+					}),
+			});
+
+		items.push({
+			label: __("Delete"),
+			onclick: () => this.clear_range(employees, period),
+		});
+
+		// clearing a range keeps a leave that reaches outside it, so the leave itself
+		// needs a way out
+		if (cell && cell.leave_application)
+			items.push({
+				label: __("Delete Leave"),
+				onclick: () => this.delete_leave(cell),
+			});
+
+		return show_menu(event, items.concat(this.get_document_items(cell)), () =>
+			this.clear_selection(),
+		);
+	}
+
+	get_document_items(cell) {
+		if (!cell) return [];
+
+		const items = [];
+
+		if (cell.attendance)
+			items.push({
+				label: __("Open Attendance"),
+				onclick: () => frappe.set_route("Form", "Attendance", cell.attendance),
+			});
+
+		if (cell.leave_application)
+			items.push({
+				label: __("Open Leave"),
+				onclick: () =>
+					frappe.set_route("Form", "Leave Application", cell.leave_application),
+			});
+
+		return items;
 	}
 
 	// -------------------------------------------------------------- actions
 
-	async delete_cell(cell, is_leave) {
-		const message = is_leave
-			? __("Delete this leave application?")
-			: __("Delete this attendance?");
+	delete_leave(cell) {
+		frappe.confirm(__("Delete this leave?"), async () => {
+			await frappe.xcall(`${METHOD}.delete_leave`, { name: cell.leave_application });
+			frappe.show_alert({ message: __("Deleted"), indicator: "green" });
+			this.refresh();
+		});
+	}
+
+	clear_range(employees, period) {
+		const span =
+			period.from_date === period.to_date
+				? frappe.datetime.str_to_user(period.from_date)
+				: `${frappe.datetime.str_to_user(
+						period.from_date,
+				  )} — ${frappe.datetime.str_to_user(period.to_date)}`;
+
+		const message =
+			employees.length === 1
+				? __("Delete everything marked for {0} on {1}?", [
+						this.employee_name(employees[0]),
+						span,
+				  ])
+				: __("Delete everything marked for {0} employees on {1}?", [
+						employees.length,
+						span,
+				  ]);
 
 		frappe.confirm(message, async () => {
-			await frappe.xcall(`${METHOD}.${is_leave ? "delete_leave" : "delete_attendance"}`, {
-				name: is_leave ? cell.leave_application : cell.attendance,
+			const result = await frappe.xcall(`${METHOD}.clear_range`, {
+				company: this.company.get_value(),
+				employees,
+				...period,
 			});
-			frappe.show_alert({ message: __("Deleted"), indicator: "green" });
+
+			report_removal(result);
 			this.refresh();
 		});
 	}
@@ -457,7 +573,9 @@ class AttendanceSheet {
 
 	approve() {
 		frappe.confirm(
-			__("Approve the timesheet for this period? The days it covers can no longer be changed."),
+			__(
+				"Approve the timesheet for this period? The days it covers can no longer be changed.",
+			),
 			async () => {
 				const { from_date, to_date } = this.period;
 				await frappe.xcall(`${METHOD}.approve_sheet`, {
@@ -467,7 +585,7 @@ class AttendanceSheet {
 				});
 				frappe.show_alert({ message: __("Timesheet approved"), indicator: "green" });
 				this.refresh();
-			}
+			},
 		);
 	}
 
@@ -483,7 +601,10 @@ class AttendanceSheet {
 
 	open_attendance_dialog({ employees, from_date, to_date, cell }) {
 		const is_range = from_date !== to_date || employees.length > 1;
-		const target = employees.length === 1 ? this.employee_name(employees[0]) : __("{0} employees", [employees.length]);
+		const target =
+			employees.length === 1
+				? this.employee_name(employees[0])
+				: __("{0} employees", [employees.length]);
 
 		const dialog = new frappe.ui.Dialog({
 			title: cell ? __("Edit Attendance") : __("Mark Attendance"),
@@ -512,7 +633,9 @@ class AttendanceSheet {
 		dialog.set_values({
 			target,
 			period: is_range
-				? `${frappe.datetime.str_to_user(from_date)} — ${frappe.datetime.str_to_user(to_date)}`
+				? `${frappe.datetime.str_to_user(from_date)} — ${frappe.datetime.str_to_user(
+						to_date,
+				  )}`
 				: frappe.datetime.str_to_user(from_date),
 			status: (cell && cell.status) || "Present",
 			half_day_status: (cell && cell.half_day_status) || "Absent",
@@ -544,11 +667,11 @@ class AttendanceSheet {
 
 		const refresh_summary = frappe.utils.debounce(
 			() => update_leave_summary(dialog, employee, allocations),
-			300
+			300,
 		);
 
 		const dialog = new frappe.ui.Dialog({
-			title: doc ? __("Edit Leave Application") : __("New Leave Application"),
+			title: doc ? __("Edit Leave") : __("New Leave"),
 			fields: get_leave_fields(allowed_types, refresh_summary),
 			primary_action_label: doc ? __("Update") : __("Create"),
 			primary_action: async (values) => {
@@ -566,7 +689,7 @@ class AttendanceSheet {
 					});
 					dialog.hide();
 					frappe.show_alert({
-						message: doc ? __("Leave application updated") : __("Leave application created"),
+						message: doc ? __("Leave updated") : __("Leave created"),
 						indicator: "green",
 					});
 					this.refresh();
@@ -593,13 +716,30 @@ class AttendanceSheet {
 
 // -------------------------------------------------------------------- cells
 
+function get_employee_html(row) {
+	const name = frappe.utils.escape_html(row.employee_name || row.employee);
+
+	return `
+		<td class="employee">
+			<a href="/app/employee/${encodeURIComponent(row.employee)}" title="${row.employee}"
+				>${name}</a>
+		</td>`;
+}
+
 function get_cell_html(row, date) {
 	const cell = row.days[date];
 	const meta = STATUS_META[cell.status] || {};
 	const classes = ["day", cell.locked ? "locked" : ""].filter(Boolean).join(" ");
+	// the cells of one leave (or of one attendance) light up together on hover
+	const group = cell.leave_application
+		? `Leave Application:${cell.leave_application}`
+		: cell.attendance
+		  ? `Attendance:${cell.attendance}`
+		  : "";
 
 	return `
 		<td class="${classes}" data-employee="${row.employee}" data-date="${date}"
+			data-group="${frappe.utils.escape_html(group)}"
 			title="${frappe.utils.escape_html(get_cell_title(cell))}">
 			<span class="status" style="color:${meta.color || "#878787"}">${get_cell_abbr(cell)}</span>
 			${get_hours_html(cell)}
@@ -611,7 +751,7 @@ function get_cell_abbr(cell) {
 	if (cell.status !== "Half Day") return get_abbr(cell.status);
 
 	return `${get_abbr("Half Day")}/${get_abbr(
-		cell.half_day_status === "Present" ? "Present" : "Absent"
+		cell.half_day_status === "Present" ? "Present" : "Absent",
 	)}`;
 }
 
@@ -634,21 +774,18 @@ function format_hours(value) {
 }
 
 function get_cell_title(cell) {
-	return [
-		cell.status ? __(cell.status) : "",
-		cell.shift,
-		cell.locked ? __("Approved") : "",
-	]
+	return [cell.status ? __(cell.status) : "", cell.shift, cell.locked ? __("Approved") : ""]
 		.filter(Boolean)
 		.join(" · ");
 }
 
 function get_totals(row) {
-	const totals = { present: 0, leave: 0, absent: 0, overtime: 0, shortfall: 0 };
+	const totals = { present: 0, leave: 0, sick: 0, absent: 0, overtime: 0, shortfall: 0 };
 
 	Object.values(row.days).forEach((cell) => {
 		if (["Present", "Work From Home"].includes(cell.status)) totals.present += 1;
 		else if (cell.status === "On Leave") totals.leave += 1;
+		else if (cell.status === "Sick Leave") totals.sick += 1;
 		else if (cell.status === "Absent") totals.absent += 1;
 		else if (cell.status === "Half Day") {
 			totals.present += 0.5;
@@ -661,7 +798,7 @@ function get_totals(row) {
 	});
 
 	return Object.fromEntries(
-		Object.entries(totals).map(([key, value]) => [key, format_hours(value)])
+		Object.entries(totals).map(([key, value]) => [key, format_hours(value)]),
 	);
 }
 
@@ -759,7 +896,12 @@ function get_leave_fields(allowed_types, refresh_summary) {
 			onchange: refresh_summary,
 		},
 		{ fieldtype: "Column Break" },
-		{ fieldtype: "Check", fieldname: "half_day", label: __("Half Day"), onchange: refresh_summary },
+		{
+			fieldtype: "Check",
+			fieldname: "half_day",
+			label: __("Half Day"),
+			onchange: refresh_summary,
+		},
 		{
 			fieldtype: "Date",
 			fieldname: "half_day_date",
@@ -793,7 +935,7 @@ async function update_leave_summary(dialog, employee, allocations) {
 						to_date: values.to_date,
 						half_day: values.half_day,
 						half_day_date: values.half_day_date,
-					}
+					},
 			  )
 			: null;
 
@@ -808,6 +950,19 @@ async function update_leave_summary(dialog, employee, allocations) {
 	dialog.fields_dict.summary.$wrapper.html(summary);
 }
 
+function report_removal({ deleted, skipped }) {
+	if (deleted)
+		frappe.show_alert({
+			message: __("{0} record(s) deleted", [deleted]),
+			indicator: "green",
+		});
+	else if (!skipped.length)
+		frappe.show_alert({ message: __("There was nothing to delete"), indicator: "blue" });
+
+	if (skipped.length)
+		report_skipped(skipped, deleted ? "orange" : "red", __("Days that were kept"));
+}
+
 // a period is a set of records, so the days that could not be marked are listed
 // instead of failing the whole period
 function report_result({ created, skipped }) {
@@ -819,20 +974,28 @@ function report_result({ created, skipped }) {
 
 	if (!skipped.length) return;
 
+	report_skipped(skipped, created.length ? "orange" : "red", __("Days that were skipped"));
+}
+
+function report_skipped(skipped, indicator, title) {
 	frappe.msgprint({
-		title: __("Days that were skipped"),
+		title,
 		message: [[__("Employee"), __("Date"), __("Reason")]].concat(
-			skipped.map((day) => [day.employee, day.date, day.reason])
+			skipped.map((day) => [day.employee, day.date, day.reason]),
 		),
 		as_table: true,
-		indicator: created.length ? "orange" : "red",
+		indicator,
 	});
 }
 
 // -------------------------------------------------------------------- menus
 
-function show_menu(event, items) {
+function show_menu(event, items, on_close) {
 	close_menu();
+
+	if (!items.length) return false;
+
+	menu_on_close = on_close || null;
 
 	const $menu = $(`<div class="${MENU_CLASS}"></div>`);
 	items.forEach((item) =>
@@ -842,7 +1005,7 @@ function show_menu(event, items) {
 				close_menu();
 				item.onclick();
 			})
-			.appendTo($menu)
+			.appendTo($menu),
 	);
 
 	$menu.appendTo(document.body);
@@ -855,6 +1018,8 @@ function show_menu(event, items) {
 		});
 		$(document).on(`keydown.${MENU_CLASS}`, (e) => e.key === "Escape" && close_menu());
 	});
+
+	return true;
 }
 
 function position_menu($menu, event) {
@@ -868,6 +1033,10 @@ function position_menu($menu, event) {
 function close_menu() {
 	$(`.${MENU_CLASS}`).remove();
 	$(document).off(`mousedown.${MENU_CLASS}`).off(`keydown.${MENU_CLASS}`);
+
+	const on_close = menu_on_close;
+	menu_on_close = null;
+	on_close && on_close();
 }
 
 // -------------------------------------------------------------------- style
@@ -878,7 +1047,7 @@ function inject_styles() {
 	const style = document.createElement("style");
 	style.id = STYLE_ID;
 	style.textContent = `
-		.attendance-sheet-container { padding: 0 15px 15px; }
+		.attendance-sheet-container { padding: 15px 0; }
 		.attendance-sheet-table { overflow-x: auto; background-color: var(--fg-color);
 			border: 1px solid var(--border-color); border-radius: var(--border-radius-md); }
 		.attendance-sheet-empty { padding: 30px; text-align: center; }
@@ -895,13 +1064,31 @@ function inject_styles() {
 			padding-left: 12px; background-color: var(--fg-color);
 			border-right: 1px solid var(--border-color); }
 		table.attendance-sheet th.employee { z-index: 3; }
+		table.attendance-sheet td.employee a { color: var(--text-color); }
+		table.attendance-sheet td.employee a:hover { color: var(--text-color);
+			text-decoration: underline; }
 		table.attendance-sheet td.day { min-width: 46px; cursor: pointer; }
+		table.attendance-sheet th.day, table.attendance-sheet td.day,
+		table.attendance-sheet th.number, table.attendance-sheet td.number {
+			border-right: 1px solid var(--border-color); }
+		table.attendance-sheet th:last-child, table.attendance-sheet td:last-child {
+			border-right: none; }
 		table.attendance-sheet th.day { cursor: pointer; }
 		table.attendance-sheet th.day:hover { color: var(--text-color);
 			background-color: var(--fg-hover-color); }
-		table.attendance-sheet td.day:hover { background-color: var(--fg-hover-color); }
-		table.attendance-sheet td.day.selected { background-color: var(--highlight-color);
+		table.attendance-sheet th.day.selected, table.attendance-sheet th.day.selected:hover {
+			color: var(--text-color); background-color: rgba(49, 138, 216, 0.18);
 			box-shadow: inset 0 0 0 1px #318AD8; }
+		table.attendance-sheet td.day:hover { background-color: var(--fg-hover-color); }
+		/* not --highlight-color: it resolves to a lighter grey than the hover state,
+		   which leaves the dragged range invisible under the cursor */
+		table.attendance-sheet td.day.selected,
+		table.attendance-sheet td.day.selected:hover {
+			background-color: rgba(49, 138, 216, 0.18);
+			box-shadow: inset 0 0 0 1px #318AD8; }
+		/* every day of the same record, lit from a hover over any one of them */
+		table.attendance-sheet td.day.related { background-color: var(--fg-hover-color);
+			box-shadow: inset 0 -2px 0 0 var(--gray-400, #9CA3AF); }
 		table.attendance-sheet td.day.locked { cursor: default; opacity: 0.6; }
 		table.attendance-sheet td.number, table.attendance-sheet th.number {
 			text-align: right; padding-right: 12px; min-width: 90px; }
@@ -909,7 +1096,7 @@ function inject_styles() {
 		.attendance-sheet .hours { display: block; font-size: var(--text-xs); }
 		.attendance-sheet .hours.over { color: var(--green-500, green); }
 		.attendance-sheet .hours.under { color: var(--red-500, red); }
-		.attendance-sheet-legend { padding: 12px 2px; font-size: var(--text-sm);
+		.attendance-sheet-legend { padding: 0 2px 12px; font-size: var(--text-sm);
 			color: var(--text-muted); }
 		.attendance-sheet-legend-item { border-left: 2px solid; padding: 0 12px 0 5px;
 			margin-right: 3px; display: inline-block; }

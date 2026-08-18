@@ -848,7 +848,8 @@ Holiday,Свято,
 Weekly Off,Вихідний,
 P,П,Attendance Sheet Abbreviation
 A,Н,Attendance Sheet Abbreviation
-WFH,ДР,Attendance Sheet Abbreviation
+WFH,ВД,Attendance Sheet Abbreviation
+SL,ЛК,Attendance Sheet Abbreviation
 L,ВП,Attendance Sheet Abbreviation
 H,С,Attendance Sheet Abbreviation
 WO,ВХ,Attendance Sheet Abbreviation
@@ -861,19 +862,12 @@ Sat,Сб,Day of Week Abbreviation
 Sun,Нд,Day of Week Abbreviation
 No employees found for this criteria.,Не знайдено працівників за цими критеріями.
 New Leave Application,Нова заявка на відпустку
-Edit Leave Application,Редагувати заявку на відпустку
 Reject this leave application?,Відхилити цю заявку на відпустку?
-Leave application approved,Заявку на відпустку затверджено
-Leave application rejected,Заявку на відпустку відхилено
-Leave application created,Заявку на відпустку створено
-Leave application updated,Заявку на відпустку оновлено
 Half Day Date,Дата половини дня
 Approve,Погодити
 Reject,Відхилити
 Explanation,Пояснення
-Edit,Редагувати
 Edit Attendance,Редагувати відвідування
-Delete this attendance?,Видалити це відвідування?
 Attendance deleted,Відвідування видалено
 Days that were skipped,Пропущені дні
 Status for Other Half,Статус другої половини дня
@@ -895,7 +889,6 @@ More Options,Більше варіантів
 Applied to every day of the period,Застосується до кожного дня періоду
 {0} employees,Працівників: {0}
 {0} day(s) marked,Відмічено днів: {0}
-Delete this leave application?,Видалити цю заявку на відпустку?
 Deleted,Видалено
 You are not permitted to fill the timesheet for {0},У вас немає прав заповнювати табель для {0}
 {0} is not a status the timesheet can set,Табель не може виставити статус {0}
@@ -904,11 +897,27 @@ Only an employee can approve a timesheet,Погодити табель може 
 There is nothing to approve,Немає чого погоджувати
 Only {0} can reopen this period,Відкрити цей період може лише {0}
 {0} was already approved for {1}: {2},{0} для {1} уже погоджено: {2}
-{0} already covers a part of this period,{0} уже охоплює частину цього періоду
+{0} already covers a part of this period for {1},{0} уже охоплює частину цього періоду для {1}
 From Date cannot be after To Date,Дата початку не може бути пізніше за дату завершення
 Attendance Sheet Approval,Погодження табеля
 Manager Name,Імʼя керівника
 Totals of the period as they were when the sheet was approved,Підсумки періоду на момент погодження табеля
 Present Days,Присутність (днів)
 Leave Days,Відпустка (днів)
+Sick Days,Лікарняний (днів)
 Absent Days,Відсутність (днів)
+Open Attendance,Відкрити відвідуваність
+Leave,Відпустка,Attendance Sheet
+New Leave,Нова відпустка
+Edit Leave,Редагувати відпустку
+Delete this leave?,Видалити цю відпустку?
+Leave created,Відпустку створено
+Leave updated,Відпустку оновлено
+Open Leave,Відкрити відпустку
+Delete everything marked for {0} on {1}?,Видалити все відмічене для {0} за {1}?
+Delete everything marked for {0} employees on {1}?,Видалити все відмічене для {0} працівників за {1}?
+{0} record(s) deleted,Видалено записів: {0}
+There was nothing to delete,Нічого видаляти
+Days that were kept,"Дні, які залишились"
+The leave reaches outside the selected period,Відпустка виходить за межі вибраного періоду
+Delete Leave,Видалити відпустку
