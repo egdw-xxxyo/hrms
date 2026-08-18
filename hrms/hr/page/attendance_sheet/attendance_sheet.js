@@ -274,7 +274,8 @@ class AttendanceSheet {
 			__("Present Days"),
 			__("Leave Days"),
 			__("Sick Days"),
-			__("Absent Days"),
+			// absence here is always the unpaid kind, and the column is read by payroll
+			`${__("Absent Days")}<span class="note">${__("at their own expense")}</span>`,
 			__("Overtime Hours"),
 			__("Shortfall Hours"),
 		];
@@ -1094,6 +1095,7 @@ function inject_styles() {
 			text-align: right; padding-right: 12px; min-width: 90px; }
 		.attendance-sheet .status { display: block; }
 		.attendance-sheet .hours { display: block; font-size: var(--text-xs); }
+		.attendance-sheet th .note { display: block; font-size: var(--text-xs); }
 		.attendance-sheet .hours.over { color: var(--green-500, green); }
 		.attendance-sheet .hours.under { color: var(--red-500, red); }
 		.attendance-sheet-legend { padding: 0 2px 12px; font-size: var(--text-sm);
