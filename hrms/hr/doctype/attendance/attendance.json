@@ -12,6 +12,8 @@
   "employee",
   "employee_name",
   "working_hours",
+  "overtime_hours",
+  "shortfall_hours",
   "status",
   "leave_type",
   "leave_application",
@@ -80,6 +82,20 @@
    "read_only": 1
   },
   {
+   "fieldname": "overtime_hours",
+   "fieldtype": "Float",
+   "label": "Overtime Hours",
+   "non_negative": 1,
+   "precision": "2"
+  },
+  {
+   "fieldname": "shortfall_hours",
+   "fieldtype": "Float",
+   "label": "Shortfall Hours",
+   "non_negative": 1,
+   "precision": "2"
+  },
+  {
    "default": "Present",
    "fieldname": "status",
    "fieldtype": "Select",
@@ -88,7 +104,7 @@
    "no_copy": 1,
    "oldfieldname": "status",
    "oldfieldtype": "Select",
-   "options": "\nPresent\nAbsent\nOn Leave\nHalf Day\nWork From Home",
+   "options": "\nPresent\nAbsent\nSick Leave\nOn Leave\nHalf Day\nWork From Home",
    "reqd": 1,
    "search_index": 1
   },

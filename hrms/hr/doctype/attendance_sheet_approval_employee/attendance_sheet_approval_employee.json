@@ -1,0 +1,105 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-17 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "total_present",
+  "total_leave",
+  "total_sick",
+  "total_absent",
+  "overtime_hours",
+  "shortfall_hours"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "total_present",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Present",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "total_leave",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Leave",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "total_sick",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Sick Leave",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "total_absent",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Absent",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "overtime_hours",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Overtime Hours",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "shortfall_hours",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Shortfall Hours",
+   "precision": "2",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-17 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HR",
+ "name": "Attendance Sheet Approval Employee",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

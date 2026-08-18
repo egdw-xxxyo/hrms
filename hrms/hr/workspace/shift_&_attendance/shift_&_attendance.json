@@ -21,9 +21,19 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Attendance",
-   "link_count": 5,
+   "link_count": 6,
    "onboard": 0,
    "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Attendance Sheet",
+   "link_count": 0,
+   "link_to": "attendance-sheet",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
   },
   {
    "hidden": 0,

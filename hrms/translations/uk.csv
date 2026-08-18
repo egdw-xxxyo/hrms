@@ -844,3 +844,81 @@ Total Allocated Leaves,Усього виділених листів,
 Used Leaves,Використовувані листи,
 PAN Number,Номер PAN,
 Expired Leaves,Прострочені відпустки,
+Holiday,Свято,
+Weekly Off,Вихідний,
+P,П,Attendance Sheet Abbreviation
+A,Н,Attendance Sheet Abbreviation
+WFH,ВД,Attendance Sheet Abbreviation
+SL,ЛК,Attendance Sheet Abbreviation
+L,ВП,Attendance Sheet Abbreviation
+H,С,Attendance Sheet Abbreviation
+WO,ВХ,Attendance Sheet Abbreviation
+Mon,Пн,Day of Week Abbreviation
+Tue,Вт,Day of Week Abbreviation
+Wed,Ср,Day of Week Abbreviation
+Thu,Чт,Day of Week Abbreviation
+Fri,Пт,Day of Week Abbreviation
+Sat,Сб,Day of Week Abbreviation
+Sun,Нд,Day of Week Abbreviation
+No employees found for this criteria.,Не знайдено працівників за цими критеріями.
+New Leave Application,Нова заявка на відпустку
+Reject this leave application?,Відхилити цю заявку на відпустку?
+Half Day Date,Дата половини дня
+Approve,Погодити
+Reject,Відхилити
+Explanation,Пояснення
+Edit Attendance,Редагувати відвідування
+Attendance deleted,Відвідування видалено
+Days that were skipped,Пропущені дні
+Status for Other Half,Статус другої половини дня
+HD,ПД,Attendance Sheet Abbreviation
+Attendance Sheet,Табель відвідуваності
+You have no direct reports to fill the timesheet for,У вас немає прямих підлеглих для заповнення табеля
+Reopen Period,Відкрити період
+Reopen this period for changes?,Відкрити цей період для змін?
+Period reopened,Період відкрито
+Approve the timesheet for this period? The days it covers can no longer be changed.,Погодити табель за цей період? Дні що він охоплює більше не можна буде змінити.
+Timesheet approved,Табель погоджено
+This period was already approved,Цей період уже погоджено
+Period Already Approved,Період уже погоджено
+Overtime Hours,Переробіток годин
+Shortfall Hours,Недоробіток годин
+Mark Attendance,Відмітити відвідуваність
+Mark,Відмітити
+More Options,Більше варіантів
+Applied to every day of the period,Застосується до кожного дня періоду
+{0} employees,Працівників: {0}
+{0} day(s) marked,Відмічено днів: {0}
+Deleted,Видалено
+You are not permitted to fill the timesheet for {0},У вас немає прав заповнювати табель для {0}
+{0} is not a status the timesheet can set,Табель не може виставити статус {0}
+"A day is either worked over or under, not both","День може бути або переробленим, або недопрацьованим, але не одночасно"
+Only an employee can approve a timesheet,Погодити табель може лише працівник
+There is nothing to approve,Немає чого погоджувати
+Only {0} can reopen this period,Відкрити цей період може лише {0}
+{0} was already approved for {1}: {2},{0} для {1} уже погоджено: {2}
+{0} already covers a part of this period for {1},{0} уже охоплює частину цього періоду для {1}
+From Date cannot be after To Date,Дата початку не може бути пізніше за дату завершення
+Attendance Sheet Approval,Погодження табеля
+Manager Name,Імʼя керівника
+Totals of the period as they were when the sheet was approved,Підсумки періоду на момент погодження табеля
+Present Days,Присутність (днів)
+Leave Days,Відпустка (днів)
+Sick Days,Лікарняний (днів)
+at their own expense,за свій рахунок
+Absent Days,Відсутність (днів)
+Open Attendance,Відкрити відвідуваність
+Leave,Відпустка,Attendance Sheet
+New Leave,Нова відпустка
+Edit Leave,Редагувати відпустку
+Delete this leave?,Видалити цю відпустку?
+Leave created,Відпустку створено
+Leave updated,Відпустку оновлено
+Open Leave,Відкрити відпустку
+Delete everything marked for {0} on {1}?,Видалити все відмічене для {0} за {1}?
+Delete everything marked for {0} employees on {1}?,Видалити все відмічене для {0} працівників за {1}?
+{0} record(s) deleted,Видалено записів: {0}
+There was nothing to delete,Нічого видаляти
+Days that were kept,"Дні, які залишились"
+The leave reaches outside the selected period,Відпустка виходить за межі вибраного періоду
+Delete Leave,Видалити відпустку
