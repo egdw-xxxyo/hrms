@@ -545,7 +545,7 @@ def cancel_leave(name: str) -> None:
 
 
 @frappe.whitelist()
-def clear_range(employees, from_date: str, to_date: str, company: str | None = None) -> dict:
+def clear_range(employees: str | list, from_date: str, to_date: str, company: str | None = None) -> dict:
 	"""Removes what the sheet holds over a period, for one employee or for a whole column.
 
 	A leave that reaches beyond the period is kept: the selection says nothing about the
