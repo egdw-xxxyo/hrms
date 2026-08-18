@@ -98,8 +98,15 @@ def get_companies() -> list[str]:
 
 @frappe.whitelist()
 def get_sheet(company: str, from_date: str, to_date: str) -> dict:
-	"""Returns one row per employee with a cell for every day of the period."""
-	from_date, to_date = validate_period(from_date, to_date)
+	return build_sheet(company, *validate_period(from_date, to_date))
+
+
+def build_sheet(company: str, from_date, to_date) -> dict:
+	"""Returns one row per employee with a cell for every day of the period.
+
+	Kept apart from the whitelisted entry point: its dates are already parsed, and
+	the type validation on a whitelisted call would refuse them.
+	"""
 	employees = get_editable_employees(company)
 	dates = [getdate(d) for d in get_date_range(from_date, to_date)]
 
@@ -431,6 +438,34 @@ def delete_attendance(name: str) -> None:
 
 
 @frappe.whitelist()
+def get_leave(name: str) -> dict:
+	"""The application behind a day, for the dialog that edits it.
+
+	The manager has no read permission on their report's documents, so the page reads
+	them here, past the same check that guards every write.
+	"""
+	leave = frappe.db.get_value(
+		"Leave Application",
+		name,
+		[
+			"name",
+			"employee",
+			"leave_type",
+			"from_date",
+			"to_date",
+			"half_day",
+			"half_day_date",
+			"description",
+		],
+		as_dict=True,
+	)
+
+	assert_can_edit([leave.employee])
+
+	return leave
+
+
+@frappe.whitelist()
 def get_leave_details(employee: str, date: str) -> dict:
 	from hrms.hr.doctype.leave_application.leave_application import get_leave_details as leave_details
 
@@ -518,7 +553,7 @@ def approve_sheet(company: str, from_date: str, to_date: str) -> dict:
 	if not employees:
 		frappe.throw(_("There is nothing to approve"))
 
-	sheet = get_sheet(company, from_date, to_date)
+	sheet = build_sheet(company, from_date, to_date)
 
 	doc = frappe.new_doc("Attendance Sheet Approval")
 	doc.update(

@@ -25,21 +25,6 @@ const QUICK_STATUSES = ["Present", "Work From Home", "Absent"];
 
 const DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const MONTHS = [
-	"Jan",
-	"Feb",
-	"Mar",
-	"Apr",
-	"May",
-	"June",
-	"July",
-	"Aug",
-	"Sep",
-	"Oct",
-	"Nov",
-	"Dec",
-];
-
 const MENU_CLASS = "attendance-sheet-menu";
 
 const STYLE_ID = "attendance-sheet-styles";
@@ -78,17 +63,31 @@ class AttendanceSheet {
 	make_filters() {
 		const today = frappe.datetime.str_to_obj(frappe.datetime.get_today());
 
-		this.month = this.page.add_select(
-			__("Month"),
-			MONTHS.map((label, index) => ({ label: __(label), value: String(index + 1) }))
-		);
-		this.month.val(String(today.getMonth() + 1));
+		this.month = this.page.add_field({
+			fieldtype: "Select",
+			fieldname: "month",
+			label: __("Month"),
+			options: get_month_options(),
+			default: String(today.getMonth() + 1),
+			change: () => this.refresh(),
+		});
 
-		const years = Array.from({ length: 5 }, (_, offset) => String(today.getFullYear() - offset));
-		this.year = this.page.add_select(__("Year"), years);
-		this.year.val(String(today.getFullYear()));
+		this.year = this.page.add_field({
+			fieldtype: "Select",
+			fieldname: "year",
+			label: __("Year"),
+			options: Array.from({ length: 5 }, (_, offset) => String(today.getFullYear() - offset)),
+			default: String(today.getFullYear()),
+			change: () => this.refresh(),
+		});
 
-		this.company = this.page.add_select(__("Company"), []);
+		this.company = this.page.add_field({
+			fieldtype: "Select",
+			fieldname: "company",
+			label: __("Company"),
+			options: [],
+			change: () => this.refresh(),
+		});
 
 		this.summarized = this.page.add_field({
 			fieldtype: "Check",
@@ -97,9 +96,9 @@ class AttendanceSheet {
 			change: () => this.render(),
 		});
 
-		[this.month, this.year, this.company].forEach(($select) =>
-			$select.on("change", () => this.refresh())
-		);
+		// set_input rather than set_value: the defaults must not fire a refresh of
+		// their own before the page has asked for its data once
+		[this.month, this.year].forEach((field) => field.set_input(field.df.default));
 	}
 
 	make_body() {
@@ -122,8 +121,8 @@ class AttendanceSheet {
 	// ------------------------------------------------------------------ data
 
 	get period() {
-		const year = cint(this.year.val());
-		const month = cint(this.month.val());
+		const year = cint(this.year.get_value());
+		const month = cint(this.month.get_value());
 		const last_day = new Date(year, month, 0).getDate();
 		const pad = (value) => String(value).padStart(2, "0");
 
@@ -134,17 +133,29 @@ class AttendanceSheet {
 	}
 
 	async refresh() {
-		if (!this.company.find("option").length) {
+		// the page loads and shows in the same breath, and a filter default may land
+		// on top of that: one fetch is enough for all of them
+		if (this.loading) return;
+		this.loading = true;
+
+		try {
+			await this.load();
+		} finally {
+			this.loading = false;
+		}
+	}
+
+	async load() {
+		if (!this.company.get_value()) {
 			const companies = await frappe.xcall(`${METHOD}.get_companies`);
-			this.company.empty().append(
-				companies.map((company) => `<option value="${frappe.utils.escape_html(company)}">
-					${frappe.utils.escape_html(company)}</option>`)
-			);
+			this.company.df.options = companies;
+			this.company.refresh();
+			this.company.set_input(companies[0]);
 		}
 
 		const { from_date, to_date } = this.period;
 		this.sheet = await frappe.xcall(`${METHOD}.get_sheet`, {
-			company: this.company.val(),
+			company: this.company.get_value(),
 			from_date,
 			to_date,
 		});
@@ -237,11 +248,12 @@ class AttendanceSheet {
 	}
 
 	get_summary_html() {
+		// day counts, not the statuses themselves: "Leave" alone translates as a verb
 		const columns = [
 			__("Employee"),
-			__("Present"),
-			__("Leave"),
-			__("Absent"),
+			__("Present Days"),
+			__("Leave Days"),
+			__("Absent Days"),
 			__("Overtime Hours"),
 			__("Shortfall Hours"),
 		];
@@ -433,7 +445,7 @@ class AttendanceSheet {
 
 	async save_attendance(values) {
 		const result = await frappe.xcall(`${METHOD}.save_attendance`, {
-			company: this.company.val(),
+			company: this.company.get_value(),
 			...values,
 		});
 
@@ -449,7 +461,7 @@ class AttendanceSheet {
 			async () => {
 				const { from_date, to_date } = this.period;
 				await frappe.xcall(`${METHOD}.approve_sheet`, {
-					company: this.company.val(),
+					company: this.company.get_value(),
 					from_date,
 					to_date,
 				});
@@ -518,7 +530,7 @@ class AttendanceSheet {
 	}
 
 	async open_leave_dialog({ employee, name, from_date, to_date }) {
-		const doc = name ? await frappe.db.get_doc("Leave Application", name) : null;
+		const doc = name ? await frappe.xcall(`${METHOD}.get_leave`, { name }) : null;
 		const start = doc ? doc.from_date : from_date;
 
 		const details = await frappe.xcall(`${METHOD}.get_leave_details`, {
@@ -553,7 +565,10 @@ class AttendanceSheet {
 						description: values.description,
 					});
 					dialog.hide();
-					frappe.show_alert({ message: __("Leave application created"), indicator: "green" });
+					frappe.show_alert({
+						message: doc ? __("Leave application updated") : __("Leave application created"),
+						indicator: "green",
+					});
 					this.refresh();
 				} finally {
 					dialog.enable_primary_action();
@@ -648,6 +663,21 @@ function get_totals(row) {
 	return Object.fromEntries(
 		Object.entries(totals).map(([key, value]) => [key, format_hours(value)])
 	);
+}
+
+// month names come from the locale rather than from the translation table: the
+// Select control translates its own labels, and "May" as a word translates into
+// the modal verb rather than into the month
+function get_month_options() {
+	const format = new Intl.DateTimeFormat(frappe.boot.lang || "en", { month: "long" });
+
+	return Array.from({ length: 12 }, (_, index) => {
+		const label = format.format(new Date(2000, index, 1));
+		return {
+			label: label.charAt(0).toUpperCase() + label.slice(1),
+			value: String(index + 1),
+		};
+	});
 }
 
 function get_day_label(date) {
