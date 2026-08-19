@@ -72,7 +72,14 @@ def get_extra_employees(manager: str) -> list[str]:
 
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
-def extra_employee_query(doctype, txt, searchfield, start, page_len, filters):
+def extra_employee_query(
+	doctype: str,
+	txt: str,
+	searchfield: str,
+	start: int,
+	page_len: int,
+	filters: dict | None,
+) -> list:
 	"""Link query for the additions field on the Employee form.
 
 	Offers everybody the manager does not already have: their own direct reports are in
