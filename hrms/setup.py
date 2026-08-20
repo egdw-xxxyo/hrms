@@ -229,6 +229,24 @@ def get_custom_fields():
 				"insert_after": "health_insurance_provider",
 			},
 			{
+				"fieldname": "attendance_sheet_section",
+				"fieldtype": "Section Break",
+				"label": _("Attendance Sheet"),
+				"insert_after": "default_shift",
+			},
+			{
+				"description": _(
+					"Employees this one fills the attendance sheet for on top of their direct reports. "
+					"They are listed first in the sheet."
+				),
+				"fieldname": "attendance_sheet_extra_employees",
+				"fieldtype": "Table MultiSelect",
+				"ignore_user_permissions": 1,
+				"label": _("Additional Employees in Attendance Sheet"),
+				"options": "Attendance Sheet Extra Employee",
+				"insert_after": "attendance_sheet_section",
+			},
+			{
 				"fieldname": "approvers_section",
 				"fieldtype": "Section Break",
 				"label": _("Approvers"),

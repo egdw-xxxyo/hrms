@@ -922,3 +922,5 @@ There was nothing to delete,Нічого видаляти
 Days that were kept,"Дні, які залишились"
 The leave reaches outside the selected period,Відпустка виходить за межі вибраного періоду
 Delete Leave,Видалити відпустку
+Additional Employees in Attendance Sheet,Додаткові працівники в табелі
+Employees this one fills the attendance sheet for on top of their direct reports. They are listed first in the sheet.,"Працівники, яких цей керівник веде в табелі додатково до своїх прямих підлеглих. У табелі вони йдуть першими."

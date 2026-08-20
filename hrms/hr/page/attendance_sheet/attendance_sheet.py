@@ -32,20 +32,95 @@ def get_editable_employees(company: str | None = None) -> dict[str, dict]:
 	"""Returns the employees the current user may fill the sheet for.
 
 	The direct reports of the employee the session user is linked to, one level of
-	`reports_to`, and nothing else. Roles grant nothing here on purpose: an HR manager
-	or an administrator without reports gets an empty sheet, exactly like anybody else.
+	`reports_to`, plus whoever HR listed on that employee's card as an addition —
+	the way somebody without a manager of their own still lands in a sheet. Roles
+	grant nothing here on purpose: an HR manager or an administrator without reports
+	gets an empty sheet, exactly like anybody else.
+
+	The additions come first, ahead of the reports, and the order carries into the page.
 	"""
 	own = get_session_employee()
 	if not own:
 		return {}
 
-	filters = {"status": "Active", "reports_to": own}
+	added = get_extra_employees(own)
+	extra = fetch_employees({"name": ["in", added]}, company) if added else {}
+	reports = fetch_employees({"reports_to": own}, company)
+
+	return extra | {name: entry for name, entry in reports.items() if name not in extra}
+
+
+def get_extra_employees(manager: str) -> list[str]:
+	"""The employees HR added to this manager's sheet by hand, an empty list if none.
+
+	The manager themselves is dropped: the field is validated against it on the Employee
+	form, and nobody marks their own attendance even if a stale row survives somewhere.
+	"""
+	rows = frappe.get_all(
+		"Attendance Sheet Extra Employee",
+		filters={
+			"parenttype": "Employee",
+			"parentfield": "attendance_sheet_extra_employees",
+			"parent": manager,
+		},
+		pluck="employee",
+		ignore_permissions=True,
+	)
+
+	return [employee for employee in rows if employee != manager]
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def extra_employee_query(
+	doctype: str,
+	txt: str,
+	searchfield: str,
+	start: int,
+	page_len: int,
+	filters: dict | None,
+) -> list:
+	"""Link query for the additions field on the Employee form.
+
+	Offers everybody the manager does not already have: their own direct reports are in
+	the sheet by hierarchy, and they themselves never belong in it. User permissions are
+	bypassed on purpose — the whole point of the field is to reach somebody outside the
+	manager's own subtree, typically the person above them — so the gate is the right to
+	edit an Employee at all, which only HR has.
+	"""
+	if not frappe.has_permission("Employee", "write"):
+		frappe.throw(_("Not permitted"), frappe.PermissionError)
+
+	manager = (filters or {}).get("manager")
+	excluded = []
+	if manager:
+		excluded = [manager, *fetch_employees({"reports_to": manager})]
+
+	scope = {"status": "Active"}
+	if excluded:
+		scope["name"] = ["not in", excluded]
+
+	return frappe.get_all(
+		"Employee",
+		filters=scope,
+		or_filters={"name": ["like", f"%{txt}%"], "employee_name": ["like", f"%{txt}%"]},
+		fields=["name", "employee_name"],
+		start=start,
+		page_length=page_len,
+		order_by="employee_name",
+		as_list=True,
+		ignore_permissions=True,
+	)
+
+
+def fetch_employees(filters: dict, company: str | None = None) -> dict[str, dict]:
+	scope = {"status": "Active", **filters}
 	if company:
-		filters["company"] = company
+		scope["company"] = company
 
 	employees = frappe.get_all(
 		"Employee",
-		filters=filters,
+		filters=scope,
 		fields=["name", "employee_name", "company", "holiday_list", "date_of_joining"],
 		order_by="employee_name",
 		ignore_permissions=True,
