@@ -69,27 +69,16 @@ class AttendanceSheet {
 	// ---------------------------------------------------------------- layout
 
 	make_filters() {
-		const today = frappe.datetime.str_to_obj(frappe.datetime.get_today());
-
 		this.month = this.page.add_field({
-			fieldtype: "Select",
+			fieldtype: "Date",
 			fieldname: "month",
 			label: __("Month"),
-			options: get_month_options(),
-			default: String(today.getMonth() + 1),
+			default: month_start(),
 			change: () => this.refresh(),
 		});
 
-		this.year = this.page.add_field({
-			fieldtype: "Select",
-			fieldname: "year",
-			label: __("Year"),
-			options: Array.from({ length: 5 }, (_, offset) =>
-				String(today.getFullYear() - offset),
-			),
-			default: String(today.getFullYear()),
-			change: () => this.refresh(),
-		});
+		// one month picker instead of a month select and a year select
+		erpnext.utils.month_field.apply_control(this.month);
 
 		this.company = this.page.add_field({
 			fieldtype: "Select",
@@ -106,9 +95,9 @@ class AttendanceSheet {
 			change: () => this.render(),
 		});
 
-		// set_input rather than set_value: the defaults must not fire a refresh of
-		// their own before the page has asked for its data once
-		[this.month, this.year].forEach((field) => field.set_input(field.df.default));
+		// set_input rather than set_value: the default must not fire a refresh of its
+		// own before the page has asked for its data once
+		this.month.set_input(this.month.df.default);
 	}
 
 	make_body() {
@@ -137,8 +126,9 @@ class AttendanceSheet {
 	// ------------------------------------------------------------------ data
 
 	get period() {
-		const year = cint(this.year.get_value());
-		const month = cint(this.month.get_value());
+		const selected = frappe.datetime.str_to_obj(this.month.get_value() || month_start());
+		const year = selected.getFullYear();
+		const month = selected.getMonth() + 1;
 		const last_day = new Date(year, month, 0).getDate();
 		const pad = (value) => String(value).padStart(2, "0");
 
@@ -803,19 +793,12 @@ function get_totals(row) {
 	);
 }
 
-// month names come from the locale rather than from the translation table: the
-// Select control translates its own labels, and "May" as a word translates into
-// the modal verb rather than into the month
-function get_month_options() {
-	const format = new Intl.DateTimeFormat(frappe.boot.lang || "en", { month: "long" });
+function month_start() {
+	const today = frappe.datetime.str_to_obj(frappe.datetime.get_today());
 
-	return Array.from({ length: 12 }, (_, index) => {
-		const label = format.format(new Date(2000, index, 1));
-		return {
-			label: label.charAt(0).toUpperCase() + label.slice(1),
-			value: String(index + 1),
-		};
-	});
+	return frappe.datetime
+		.obj_to_str(new Date(today.getFullYear(), today.getMonth(), 1))
+		.slice(0, 10);
 }
 
 function get_day_label(date) {
