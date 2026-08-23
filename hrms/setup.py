@@ -296,6 +296,19 @@ def get_custom_fields():
 				"insert_after": "salary_cb",
 			},
 		],
+		"Leave Type": [
+			{
+				"description": _(
+					"Shown in the attendance sheet on the days of this leave. "
+					"Days of a leave without an abbreviation are marked as leave in general."
+				),
+				"fieldname": "attendance_sheet_abbr",
+				"fieldtype": "Data",
+				"label": _("Attendance Sheet Abbreviation"),
+				"length": 5,
+				"insert_after": "leave_type_name",
+			},
+		],
 		"Project": [
 			{
 				"fieldname": "total_expense_claim",

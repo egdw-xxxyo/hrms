@@ -924,3 +924,7 @@ The leave reaches outside the selected period,Відпустка виходит�
 Delete Leave,Видалити відпустку
 Additional Employees in Attendance Sheet,Додаткові працівники в табелі
 Employees this one fills the attendance sheet for on top of their direct reports. They are listed first in the sheet.,"Працівники, яких цей керівник веде в табелі додатково до своїх прямих підлеглих. У табелі вони йдуть першими."
+Attendance Sheet Abbreviation,Позначка в табелі
+"Shown in the attendance sheet on the days of this leave. Days of a leave without an abbreviation are marked as leave in general.","Показується в табелі у дні цієї відпустки. Дні відпустки без позначки відмічаються як відпустка загалом."
+Paid,Офіц,Leave Type Abbreviation
+Unpaid,ЗаВл,Leave Type Abbreviation

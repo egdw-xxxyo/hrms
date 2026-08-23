@@ -185,6 +185,7 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 	leaves = get_leave_map(list(employees), from_date, to_date)
 	holidays = get_holiday_map(employees, company, from_date, to_date)
 	locks = get_lock_map(list(employees), from_date, to_date)
+	leave_abbrs = get_leave_abbreviations()
 
 	rows = [
 		{
@@ -192,7 +193,13 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 			"employee_name": details.employee_name,
 			"days": {
 				cstr(d): get_cell(
-					employee, d, attendance, leaves, holidays.get(details.holiday_list) or {}, locks
+					employee,
+					d,
+					attendance,
+					leaves,
+					holidays.get(details.holiday_list) or {},
+					locks,
+					leave_abbrs,
 				)
 				for d in dates
 			},
@@ -210,7 +217,15 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 	}
 
 
-def get_cell(employee: str, day, attendance: dict, leaves: dict, holidays: dict, locks: dict) -> dict:
+def get_cell(
+	employee: str,
+	day,
+	attendance: dict,
+	leaves: dict,
+	holidays: dict,
+	locks: dict,
+	leave_abbrs: dict,
+) -> dict:
 	entry = attendance.get(employee, {}).get(day)
 	leave = leaves.get(employee, {}).get(day)
 
@@ -225,11 +240,28 @@ def get_cell(employee: str, day, attendance: dict, leaves: dict, holidays: dict,
 		"half_day_status": (entry.half_day_status if entry else None) or "",
 		"attendance": entry.name if entry else None,
 		"leave_application": (entry.leave_application if entry else None) or (leave.name if leave else None),
+		"leave_abbr": (leave_abbrs.get(leave.leave_type) if leave else None) or "",
 		"overtime_hours": flt(entry.overtime_hours) if entry else 0.0,
 		"shortfall_hours": flt(entry.shortfall_hours) if entry else 0.0,
 		"shift": (entry.shift if entry else None) or "",
 		"locked": day in locks.get(employee, set()),
 	}
+
+
+def get_leave_abbreviations() -> dict[str, str]:
+	"""The mark each leave type leaves on a day, keyed by type.
+
+	Set on the leave type itself, so a new kind of leave gets its own letters in the
+	sheet without a code change. A type without one falls back to leave in general.
+	"""
+	types = frappe.get_all(
+		"Leave Type",
+		filters={"attendance_sheet_abbr": ("is", "set")},
+		fields=["name", "attendance_sheet_abbr"],
+		order_by="name",
+		ignore_permissions=True,
+	)
+	return {entry.name: entry.attendance_sheet_abbr for entry in types}
 
 
 def get_attendance_map(employees: list[str], from_date, to_date) -> dict:

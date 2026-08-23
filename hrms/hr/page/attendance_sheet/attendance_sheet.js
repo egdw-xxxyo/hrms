@@ -270,14 +270,14 @@ class AttendanceSheet {
 	get_summary_html() {
 		// day counts, not the statuses themselves: "Leave" alone translates as a verb
 		const columns = [
-			__("Employee"),
-			__("Present Days"),
-			__("Leave Days"),
-			__("Sick Days"),
+			[__("Employee")],
+			[__("Present Days")],
+			[__("Leave Days")],
+			[__("Sick Days")],
 			// absence here is always the unpaid kind, and the column is read by payroll
-			`${__("Absent Days")}<span class="note">${__("at their own expense")}</span>`,
-			__("Overtime Hours"),
-			__("Shortfall Hours"),
+			[__("Absent Days"), __("at their own expense")],
+			[__("Overtime Hours")],
+			[__("Shortfall Hours")],
 		];
 
 		const body = this.sheet.employees
@@ -300,8 +300,9 @@ class AttendanceSheet {
 			<table class="attendance-sheet attendance-sheet--summary">
 				<thead><tr>${columns
 					.map(
-						(label, index) =>
-							`<th class="${index ? "number" : "employee"}">${label}</th>`,
+						([label, note], index) =>
+							`<th class="${index ? "number" : "employee"}">${label}
+								<span class="note">${note || "&nbsp;"}</span></th>`,
 					)
 					.join("")}</tr></thead>
 				<tbody>${body}</tbody>
@@ -743,7 +744,7 @@ function get_cell_html(row, date) {
 			data-group="${frappe.utils.escape_html(group)}"
 			title="${frappe.utils.escape_html(get_cell_title(cell))}">
 			<span class="status" style="color:${meta.color || "#878787"}">${get_cell_abbr(cell)}</span>
-			${get_hours_html(cell)}
+			${get_second_line_html(cell)}
 		</td>`;
 }
 
@@ -761,6 +762,15 @@ function get_abbr(status) {
 	return meta ? __(meta.abbr, null, ABBR_CONTEXT) : "";
 }
 
+// the line under the status: the hours of the day, or which kind of leave it was
+function get_second_line_html(cell) {
+	if (cell.overtime_hours || cell.shortfall_hours) return get_hours_html(cell);
+	if (cell.leave_abbr)
+		return `<span class="hours leave">${frappe.utils.escape_html(cell.leave_abbr)}</span>`;
+
+	return get_hours_html(cell);
+}
+
 function get_hours_html(cell) {
 	if (cell.overtime_hours)
 		return `<span class="hours over">+${format_hours(cell.overtime_hours)}</span>`;
@@ -775,7 +785,18 @@ function format_hours(value) {
 }
 
 function get_cell_title(cell) {
-	return [cell.status ? __(cell.status) : "", cell.shift, cell.locked ? __("Approved") : ""]
+	const hours = cell.overtime_hours
+		? `${__("Overtime Hours")}: ${format_hours(cell.overtime_hours)}`
+		: cell.shortfall_hours
+		  ? `${__("Shortfall Hours")}: ${format_hours(cell.shortfall_hours)}`
+		  : "";
+
+	return [
+		cell.status ? __(cell.status) : "",
+		hours,
+		cell.shift,
+		cell.locked ? __("Approved") : "",
+	]
 		.filter(Boolean)
 		.join(" · ");
 }
@@ -1095,6 +1116,7 @@ function inject_styles() {
 			text-align: right; padding-right: 12px; min-width: 90px; }
 		.attendance-sheet .status { display: block; }
 		.attendance-sheet .hours { display: block; font-size: var(--text-xs); }
+		.attendance-sheet .hours.leave { color: var(--text-muted); }
 		.attendance-sheet th .note { display: block; font-size: var(--text-xs); }
 		.attendance-sheet .hours.over { color: var(--green-500, green); }
 		.attendance-sheet .hours.under { color: var(--red-500, red); }
