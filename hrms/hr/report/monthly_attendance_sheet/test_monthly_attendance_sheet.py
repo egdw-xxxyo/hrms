@@ -3,6 +3,7 @@ from dateutil.relativedelta import relativedelta
 import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, get_year_ending, get_year_start, getdate
+from frappe.utils.nestedset import get_descendants_of
 
 from erpnext.setup.doctype.employee.test_employee import make_employee
 from erpnext.setup.doctype.holiday_list.test_holiday_list import set_holiday_list
@@ -11,7 +12,10 @@ from hrms.hr.doctype.attendance.attendance import mark_attendance
 from hrms.hr.doctype.leave_allocation.leave_allocation import OverlapError
 from hrms.hr.doctype.leave_application.test_leave_application import make_allocation_record
 from hrms.hr.doctype.shift_type.test_shift_type import setup_shift_type
-from hrms.hr.report.monthly_attendance_sheet.monthly_attendance_sheet import execute
+from hrms.hr.report.monthly_attendance_sheet.monthly_attendance_sheet import (
+	execute,
+	get_dates_in_period,
+)
 from hrms.payroll.doctype.salary_slip.test_salary_slip import (
 	make_holiday_list,
 	make_leave_application,
@@ -52,9 +56,11 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"month": previous_month_first.month,
 				"year": previous_month_first.year,
 				"company": self.company,
+				"show_chart": 1,
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		datasets = report[3]["data"]["datasets"]
@@ -90,6 +96,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		day_shift_row = report[1][0]
@@ -134,6 +141,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 		# do not split for leave record
 		self.assertEqual(len(report[1]), 1)
@@ -166,6 +174,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		# single row with leave record
@@ -187,12 +196,16 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 		mark_attendance(
 			self.employee, previous_month_first + relativedelta(days=3), "Present"
 		)  # attendance without shift
-		mark_attendance(
+		overtime = mark_attendance(
 			self.employee, previous_month_first + relativedelta(days=4), "Present", late_entry=1
 		)  # late entry
-		mark_attendance(
+		shortfall = mark_attendance(
 			self.employee, previous_month_first + relativedelta(days=5), "Present", early_exit=1
 		)  # early exit
+
+		# the hours of a day are the report's own columns, and its second line in the sheet
+		frappe.db.set_value("Attendance", overtime, "overtime_hours", 2.5)
+		frappe.db.set_value("Attendance", shortfall, "shortfall_hours", 1)
 
 		leave_application = get_leave_application(self.employee)
 
@@ -205,21 +218,21 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		row = report[1][0]
 		self.assertEqual(row["employee"], self.employee)
 
-		# 4 present + half day absent 0.5
+		# 4 present + the half of the half day that was worked
 		self.assertEqual(row["total_present"], 4.5)
-		# 1 present
-		self.assertEqual(row["total_absent"], 1)
-		# leave days + half day leave 0.5
-		self.assertEqual(row["total_leaves"], leave_application.total_leave_days + 0.5)
-
-		self.assertEqual(row["_test_leave_type"], leave_application.total_leave_days)
-		self.assertEqual(row["total_late_entries"], 1)
-		self.assertEqual(row["total_early_exits"], 1)
+		# 1 absent + the other half of the half day, which no leave covers
+		self.assertEqual(row["total_absent"], 1.5)
+		# a half day is not a day of leave, only the leave application is
+		self.assertEqual(row["total_leave"], leave_application.total_leave_days)
+		self.assertEqual(row["total_sick"], 0)
+		self.assertEqual(row["overtime_hours"], 2.5)
+		self.assertEqual(row["shortfall_hours"], 1)
 
 	@set_holiday_list("Salary Slip Test Holiday List", "_Test Company")
 	def test_attendance_with_group_by_filter(self):
@@ -247,6 +260,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		department = frappe.db.get_value("Employee", self.employee, "department")
@@ -299,9 +313,11 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"year": previous_month_first.year,
 				"company": self.company,
 				"employee": self.employee,
+				"show_chart": 1,
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		record = report[1][0]
@@ -342,10 +358,12 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 		self.assertEqual(len(report[1]), 3)
 
 		filters.include_company_descendants = 0
+		hand_over(filters)
 		report = execute(filters=filters)
 		self.assertEqual(len(report[1]), 1)
 
@@ -377,9 +395,11 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"company": self.company,
 				"employee": self.employee,
 				"summarized_view": 1,
+				"show_chart": 1,
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		record = report[1][0]
@@ -437,6 +457,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": self.filter_based_on,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 		self.assertEqual(report, ([], [], None, None))
 
@@ -451,12 +472,16 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 		mark_attendance(
 			self.employee, previous_month_first + relativedelta(days=3), "Present"
 		)  # attendance without shift
-		mark_attendance(
+		overtime = mark_attendance(
 			self.employee, previous_month_first + relativedelta(days=4), "Present", late_entry=1
 		)  # late entry
-		mark_attendance(
+		shortfall = mark_attendance(
 			self.employee, previous_month_first + relativedelta(days=5), "Present", early_exit=1
 		)  # early exit
+
+		# the hours of a day are the report's own columns, and its second line in the sheet
+		frappe.db.set_value("Attendance", overtime, "overtime_hours", 2.5)
+		frappe.db.set_value("Attendance", shortfall, "shortfall_hours", 1)
 
 		leave_application = get_leave_application(self.employee, previous_month_first)
 
@@ -469,21 +494,21 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"filter_based_on": "Date Range",
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 
 		row = report[1][0]
 		self.assertEqual(row["employee"], self.employee)
 
-		# 4 present + half day absent 0.5
+		# 4 present + the half of the half day that was worked
 		self.assertEqual(row["total_present"], 4.5)
-		# 1 present
-		self.assertEqual(row["total_absent"], 1)
-		# leave days + half day leave 0.5
-		self.assertEqual(row["total_leaves"], leave_application.total_leave_days + 0.5)
-
-		self.assertEqual(row["_test_leave_type"], leave_application.total_leave_days)
-		self.assertEqual(row["total_late_entries"], 1)
-		self.assertEqual(row["total_early_exits"], 1)
+		# 1 absent + the other half of the half day, which no leave covers
+		self.assertEqual(row["total_absent"], 1.5)
+		# a half day is not a day of leave, only the leave application is
+		self.assertEqual(row["total_leave"], leave_application.total_leave_days)
+		self.assertEqual(row["total_sick"], 0)
+		self.assertEqual(row["overtime_hours"], 2.5)
+		self.assertEqual(row["shortfall_hours"], 1)
 
 	def test_detailed_view_with_date_range_filter(self):
 		today = getdate()
@@ -501,6 +526,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"company": self.company,
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 		day_shift_row = report[1][0]
 		row_without_shift = report[1][1]
@@ -536,6 +562,7 @@ class TestMonthlyAttendanceSheet(FrappeTestCase):
 				"group_by": "Department",
 			}
 		)
+		hand_over(filters)
 		report = execute(filters=filters)
 		day_shift_row = report[1][1]
 		row_without_shift = report[1][2]
@@ -585,6 +612,37 @@ def execute_report_with_invalid_filters(invalid_filter_name):
 			)
 
 	execute(filters=filters)
+
+
+def hand_over(filters):
+	"""Hands the whole period of the filters over to payroll, the way a manager would.
+
+	The report shows only the days an approved sheet holds, so a test that wants to read
+	days has to approve them first. One sheet for everybody in the company is enough:
+	which manager filed it is nothing the report asks about.
+	"""
+	dates = get_dates_in_period(filters)
+	companies = [filters.company, *get_descendants_of("Company", filters.company)]
+	employees = frappe.get_all("Employee", filters={"company": ("in", companies)}, pluck="name")
+
+	if frappe.db.exists(
+		"Attendance Sheet Approval",
+		{"docstatus": 1, "company": filters.company, "from_date": dates[0], "to_date": dates[-1]},
+	):
+		return
+
+	approval = frappe.get_doc(
+		{
+			"doctype": "Attendance Sheet Approval",
+			"manager": employees[0],
+			"company": filters.company,
+			"from_date": dates[0],
+			"to_date": dates[-1],
+			"employees": [{"employee": employee} for employee in employees],
+		}
+	)
+	approval.insert()
+	approval.submit()
 
 
 def date_key(date_obj):

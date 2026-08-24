@@ -81,3 +81,37 @@ def validate_not_approved(employee: str, date: str) -> None:
 		),
 		title=_("Period Already Approved"),
 	)
+
+
+def get_approved_periods(from_date: str, to_date: str, employee: str | None = None) -> dict[str, list[tuple]]:
+	"""The stretches of days each employee has already been handed over, within a period.
+
+	Keyed by employee, every value a list of (from_date, to_date) pairs, both ends
+	included. A sheet is counted whatever company it was filed under: what makes a day
+	final is that somebody submitted the sheet holding it, not which company the manager
+	handed it over in.
+	"""
+	Approval = frappe.qb.DocType("Attendance Sheet Approval")
+	Row = frappe.qb.DocType("Attendance Sheet Approval Employee")
+
+	query = (
+		frappe.qb.from_(Approval)
+		.join(Row)
+		.on(Row.parent == Approval.name)
+		.select(Row.employee, Approval.from_date, Approval.to_date)
+		.where(
+			(Approval.docstatus == 1)
+			& (Approval.from_date <= getdate(to_date))
+			& (Approval.to_date >= getdate(from_date))
+		)
+	)
+
+	if employee:
+		query = query.where(Row.employee == employee)
+
+	periods = {}
+
+	for entry in query.run(as_dict=True):
+		periods.setdefault(entry.employee, []).append((getdate(entry.from_date), getdate(entry.to_date)))
+
+	return periods

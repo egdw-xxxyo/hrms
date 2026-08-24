@@ -109,6 +109,12 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 			fieldtype: "Check",
 			default: 0,
 		},
+		{
+			fieldname: "show_chart",
+			label: __("Show Chart"),
+			fieldtype: "Check",
+			default: 0,
+		},
 	],
 	onload: function () {
 		return frappe.call({
@@ -123,30 +129,80 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 		});
 	},
 	formatter: function (value, row, column, data, default_formatter) {
+		if (column.fieldtype === "Float") return format_total(value);
+
 		value = default_formatter(value, row, column, data);
-		const summarized_view = frappe.query_report.get_filter_value("summarized_view");
 		const group_by = frappe.query_report.get_filter_value("group_by");
 
 		if (group_by && column.colIndex === 1) {
 			value = "<strong>" + value + "</strong>";
 		}
 
-		if (!summarized_view) {
-			if ((group_by && column.colIndex > 3) || (!group_by && column.colIndex > 2)) {
-				if (value == "HD/P") value = "<span style='color:#914EE3'>" + value + "</span>";
-				else if (value == "HD/A")
-					value = "<span style='color:orange'>" + value + "</span>";
-				else if (value == "P" || value == "WFH")
-					value = "<span style='color:green'>" + value + "</span>";
-				else if (value == "A") value = "<span style='color:red'>" + value + "</span>";
-				else if (value == "L") value = "<span style='color:#318AD8'>" + value + "</span>";
-				else value = "<span style='color:#878787'>" + value + "</span>";
-			}
-		}
+		const mark = data && data.marks && data.marks[column.fieldname];
 
-		return value;
+		return mark ? get_mark_html(value, mark) : value;
+	},
+	get_datatable_options: (options) => ({
+		...options,
+		// a day carries two lines, the mark and the note under it, the way the sheet page
+		// draws it; the stock 33 fits only one. The number has to be the real height of
+		// the two, because it is also what the virtual scroll positions rows by, and the
+		// cell hides whatever does not fit — see the line heights in style_days
+		cellHeight: 50,
+	}),
+	after_datatable_render: () => {
+		// the wrapper keeps the space of the chart it last drew, so it is hidden by hand
+		if (!frappe.query_report.get_filter_value("show_chart")) frappe.query_report.$chart.hide();
+		style_days();
 	},
 };
+
+// the day cells are the sheet page's cells: the same class names, the same rules, down to
+// the padding. The rest is what the datatable costs — its cell is a fixed box that hides
+// what does not fit, so the two lines are given a height each and the box is cut to the
+// bone (the stock half a rem all round leaves the second line under the floor). The
+// filter row is not a day and keeps the height it had. Written once, reaching one table
+function style_days() {
+	const table_class = "attendance-marks";
+	frappe.query_report.$report.addClass(table_class);
+
+	if (document.getElementById(table_class)) return;
+
+	const style = document.createElement("style");
+	style.id = table_class;
+	style.textContent = `
+		.${table_class} .dt-cell__content { padding: 6px 4px; }
+		.${table_class} .status { display: block; line-height: 1.4; }
+		.${table_class} .hours { display: block; font-size: var(--text-xs); line-height: 1.2; }
+		.${table_class} .hours.leave { color: var(--text-muted); }
+		.${table_class} .hours.over { color: var(--green-500, green); }
+		.${table_class} .hours.under { color: var(--red-500, red); }
+		.${table_class} .dt-row-filter .dt-cell { height: 33px; }
+	`;
+	document.head.appendChild(style);
+}
+
+// the totals read the way the sheet page prints them: two decimals at the most, and none
+// at all where the number is whole
+function format_total(value) {
+	if (value === null || value === undefined || value === "") return "";
+
+	return String(Math.round(flt(value) * 100) / 100);
+}
+
+// the day of a cell, the way the attendance sheet page draws it: the mark in the colour
+// of its status, and under it the hours the day ran over or short, or the kind of leave.
+// Both come from the server, so the report holds no table of its own to keep in step
+function get_mark_html(value, mark) {
+	const note = mark.note
+		? `<span class="hours ${mark.note.kind}">${frappe.utils.escape_html(
+				mark.note.text,
+		  )}</span>`
+		: "";
+
+	return `<span class="status" style="color:${mark.color}">${value}</span>${note}`;
+}
+
 function set_reqd_filter(fieldname, is_reqd) {
 	let filter = frappe.query_report.get_filter(fieldname);
 	filter.df.reqd = is_reqd;

@@ -26,21 +26,6 @@ class EmployeeMaster(Employee):
 		self.employee = self.name
 
 
-def validate_attendance_sheet_extra_employees(doc, method=None):
-	"""Nobody fills their own attendance sheet.
-
-	The field exists for the person at the top of the chain, who reports to nobody and so
-	lands in no sheet at all — somebody a level below has to carry them. Letting an employee
-	add themselves would hand them their own attendance to mark and approve.
-	"""
-	for row in doc.get("attendance_sheet_extra_employees") or []:
-		if row.employee == doc.name:
-			frappe.throw(
-				_("{0} cannot be added to their own attendance sheet.").format(doc.employee_name or doc.name),
-				title=_("Not Allowed"),
-			)
-
-
 def validate_onboarding_process(doc, method=None):
 	"""Validates Employee Creation for linked Employee Onboarding"""
 	if not doc.job_applicant:
