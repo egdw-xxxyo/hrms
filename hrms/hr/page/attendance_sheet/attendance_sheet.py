@@ -13,6 +13,7 @@ import frappe
 from frappe import _
 from frappe.utils import cstr, flt, formatdate, getdate
 
+from hrms.hr.attendance_marks import get_leave_abbreviations
 from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import (
 	get_approval_for,
 	validate_not_approved,
@@ -53,10 +54,10 @@ def get_editable_employees(company: str | None = None) -> dict[str, dict]:
 def get_extra_employees(manager: str) -> list[str]:
 	"""The employees HR added to this manager's sheet by hand, an empty list if none.
 
-	The manager themselves is dropped: the field is validated against it on the Employee
-	form, and nobody marks their own attendance even if a stale row survives somewhere.
+	The manager is allowed among them: somebody at the top of the chain reports to nobody
+	and would otherwise land in no sheet at all, so HR can put them in their own.
 	"""
-	rows = frappe.get_all(
+	return frappe.get_all(
 		"Attendance Sheet Extra Employee",
 		filters={
 			"parenttype": "Employee",
@@ -66,8 +67,6 @@ def get_extra_employees(manager: str) -> list[str]:
 		pluck="employee",
 		ignore_permissions=True,
 	)
-
-	return [employee for employee in rows if employee != manager]
 
 
 @frappe.whitelist()
@@ -82,19 +81,17 @@ def extra_employee_query(
 ) -> list:
 	"""Link query for the additions field on the Employee form.
 
-	Offers everybody the manager does not already have: their own direct reports are in
-	the sheet by hierarchy, and they themselves never belong in it. User permissions are
-	bypassed on purpose — the whole point of the field is to reach somebody outside the
-	manager's own subtree, typically the person above them — so the gate is the right to
-	edit an Employee at all, which only HR has.
+	Offers everybody the manager does not already have by hierarchy, themselves included:
+	somebody who reports to nobody is in no sheet until they are put in one, and their own
+	is the only one left. User permissions are bypassed on purpose — the whole point of the
+	field is to reach somebody outside the manager's own subtree — so the gate is the right
+	to edit an Employee at all, which only HR has.
 	"""
 	if not frappe.has_permission("Employee", "write"):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 
 	manager = (filters or {}).get("manager")
-	excluded = []
-	if manager:
-		excluded = [manager, *fetch_employees({"reports_to": manager})]
+	excluded = list(fetch_employees({"reports_to": manager})) if manager else []
 
 	scope = {"status": "Active"}
 	if excluded:
@@ -246,22 +243,6 @@ def get_cell(
 		"shift": (entry.shift if entry else None) or "",
 		"locked": day in locks.get(employee, set()),
 	}
-
-
-def get_leave_abbreviations() -> dict[str, str]:
-	"""The mark each leave type leaves on a day, keyed by type.
-
-	Set on the leave type itself, so a new kind of leave gets its own letters in the
-	sheet without a code change. A type without one falls back to leave in general.
-	"""
-	types = frappe.get_all(
-		"Leave Type",
-		filters={"attendance_sheet_abbr": ("is", "set")},
-		fields=["name", "attendance_sheet_abbr"],
-		order_by="name",
-		ignore_permissions=True,
-	)
-	return {entry.name: entry.attendance_sheet_abbr for entry in types}
 
 
 def get_attendance_map(employees: list[str], from_date, to_date) -> dict:
@@ -600,7 +581,8 @@ def save_leave(
 
 	The timesheet has no pending state: what a manager enters for their report is the
 	decision itself, so the application is submitted as Approved right away and the
-	doctype writes the attendance behind it.
+	doctype writes the attendance behind it. That holds for the manager's own days too,
+	which is why the leave carries the flag that lifts the self-approval check here alone.
 	"""
 	from_date, to_date = validate_period(from_date, to_date)
 	assert_can_edit([employee])
@@ -624,6 +606,7 @@ def save_leave(
 			"status": "Approved",
 		}
 	)
+	doc.flags.filed_from_attendance_sheet = True
 	doc.insert(ignore_permissions=True)
 	doc.submit()
 
@@ -768,6 +751,7 @@ def approve_sheet(company: str, from_date: str, to_date: str) -> dict:
 			],
 		}
 	)
+	doc.flags.filed_from_attendance_sheet = True
 	doc.insert(ignore_permissions=True)
 	doc.submit()
 
