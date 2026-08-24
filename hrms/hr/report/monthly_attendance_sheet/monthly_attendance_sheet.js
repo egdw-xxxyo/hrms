@@ -154,6 +154,8 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 		// the wrapper keeps the space of the chart it last drew, so it is hidden by hand
 		if (!frappe.query_report.get_filter_value("show_chart")) frappe.query_report.$chart.hide();
 		style_days();
+		stripe_rows();
+		follow_cursor();
 	},
 };
 
@@ -171,6 +173,9 @@ function style_days() {
 	const style = document.createElement("style");
 	style.id = table_class;
 	style.textContent = `
+		.${table_class} { --sheet-zebra: #F7F8F9; --sheet-cross: rgba(49, 138, 216, 0.08); }
+		[data-theme="dark"] .${table_class} { --sheet-zebra: #232A31;
+			--sheet-cross: rgba(120, 180, 240, 0.1); }
 		.${table_class} .dt-cell__content { padding: 6px 4px; }
 		.${table_class} .status { display: block; line-height: 1.4; }
 		.${table_class} .hours { display: block; font-size: var(--text-xs); line-height: 1.2; }
@@ -180,6 +185,60 @@ function style_days() {
 		.${table_class} .dt-row-filter .dt-cell { height: 33px; }
 	`;
 	document.head.appendChild(style);
+}
+
+// every other row a shade darker. The rule is written per row rather than with
+// :nth-child, because the table only keeps the visible rows in the DOM and their position
+// among them shifts as it scrolls — the stripes would swap under the cursor
+function stripe_rows() {
+	const rows = (frappe.query_report.data || []).length;
+	const even = Array.from({ length: rows }, (_, index) => index)
+		.filter((index) => index % 2)
+		.map((index) => `.attendance-marks .dt-row-${index} .dt-cell`);
+
+	get_sheet_style("attendance-marks-stripes").textContent = even.length
+		? `${even.join(",")} { background-color: var(--sheet-zebra); }`
+		: "";
+}
+
+// the row and the column under the cursor. Nothing on the cells is touched: the rule
+// names them by the classes the table already gave them, so following the cursor across
+// a month of columns costs one line of CSS rewritten, not a class on every cell
+function follow_cursor() {
+	const report = frappe.query_report.$report[0];
+	if (report.dataset.followsCursor) return;
+
+	report.dataset.followsCursor = "yes";
+
+	const paint = (event) => {
+		const cell = event.target.closest(".dt-cell");
+		const column = cell && cell.className.match(/dt-cell--col-(\d+)/);
+		const row = cell && cell.closest(".dt-row").className.match(/dt-row-(\d+)/);
+		const tint = "background-image: linear-gradient(var(--sheet-cross), var(--sheet-cross));";
+
+		get_sheet_style("attendance-marks-cursor").textContent =
+			column && row
+				? `
+				.attendance-marks .dt-row:not(.dt-row-filter) .dt-cell--col-${column[1]} { ${tint} }
+				.attendance-marks .dt-row-${row[1]} .dt-cell { ${tint} }
+			`
+				: "";
+	};
+
+	report.addEventListener("mouseover", paint);
+	report.addEventListener("mouseleave", paint);
+}
+
+function get_sheet_style(id) {
+	let style = document.getElementById(id);
+
+	if (!style) {
+		style = document.createElement("style");
+		style.id = id;
+		document.head.appendChild(style);
+	}
+
+	return style;
 }
 
 // the totals read the way the sheet page prints them: two decimals at the most, and none
