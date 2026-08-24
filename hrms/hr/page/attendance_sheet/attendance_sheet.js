@@ -119,6 +119,11 @@ class AttendanceSheet {
 		this.$table.on("mouseenter", "td.day", (e) => this.paint_related(e.currentTarget));
 		this.$table.on("mouseleave", "td.day", () => this.clear_related());
 
+		// the row and the column of the cell under the cursor, so a day far to the right
+		// can still be read back to the name it belongs to
+		this.$table.on("mouseenter", "td, th.day", (e) => this.paint_cross(e.currentTarget));
+		this.$table.on("mouseleave", () => this.clear_cross());
+
 		// the release may happen anywhere, a drag that leaves the table still ends here
 		$(document).on("mouseup.attendance-sheet", (e) => this.finish_selection(e));
 	}
@@ -392,6 +397,9 @@ class AttendanceSheet {
 	paint_selection() {
 		const { top, bottom, left, right } = this.bounds;
 
+		// a rectangle of its own is enough to follow; the crosshair on top of it is noise
+		this.clear_cross();
+
 		// the braces matter: jQuery stops iterating on a callback that returns false,
 		// and classList.toggle answers with whether the class ended up set
 		this.$table.find("td.day").each((_index, cell) => {
@@ -402,19 +410,25 @@ class AttendanceSheet {
 			);
 		});
 
+		// the edges of the rectangle: which names and which days it covers, marked where
+		// the eye looks for them rather than only in the middle of the table
 		this.$table.find("th.day").each((_index, header) => {
 			const column = this.sheet.dates.indexOf(header.dataset.date);
-			header.classList.toggle(
-				"selected",
-				this.selection.columns && column >= left && column <= right,
-			);
+			const inside = column >= left && column <= right;
+
+			header.classList.toggle("selected", Boolean(this.selection.columns) && inside);
+			header.classList.toggle("in-selection", !this.selection.columns && inside);
+		});
+
+		this.$table.find("tbody tr[data-employee]").each((index, row) => {
+			row.classList.toggle("in-selection", index >= top && index <= bottom);
 		});
 	}
 
 	clear_selection() {
 		if (!this.selection) return;
 
-		this.$table.find(".selected").removeClass("selected");
+		this.$table.find(".selected, .in-selection").removeClass("selected in-selection");
 		this.selection = null;
 	}
 
@@ -432,6 +446,34 @@ class AttendanceSheet {
 
 	clear_related() {
 		this.$table.find("td.day.related").removeClass("related");
+	}
+
+	// ----------------------------------------------------------------- cross
+
+	paint_cross(cell) {
+		// a drag paints its own rectangle, and the crosshair would fight it for the cell
+		if (this.selection) return;
+
+		const date = cell.dataset.date || null;
+		const row = cell.closest("tr");
+
+		// crossing cells within the same row and column changes nothing on screen, and
+		// repainting a whole column on every one of them is what makes a table stutter
+		if (this.cross && this.cross.date === date && this.cross.row === row) return;
+
+		this.clear_cross();
+		this.cross = { date, row };
+
+		row.classList.add("hl-row");
+		if (date) this.$table.find(`[data-date="${CSS.escape(date)}"]`).addClass("hl-col");
+	}
+
+	clear_cross() {
+		if (!this.cross) return;
+
+		this.cross.row.classList.remove("hl-row");
+		this.$table.find(".hl-col").removeClass("hl-col");
+		this.cross = null;
 	}
 
 	// ---------------------------------------------------------------- menus
@@ -1054,7 +1096,11 @@ function inject_styles() {
 	style.textContent = `
 		.attendance-sheet-container { padding: 15px 0; }
 		.attendance-sheet-table { overflow-x: auto; background-color: var(--fg-color);
-			border: 1px solid var(--border-color); border-radius: var(--border-radius-md); }
+			border: 1px solid var(--border-color); border-radius: var(--border-radius-md);
+			--sheet-zebra: #F7F8F9; --sheet-cross: rgba(49, 138, 216, 0.08);
+			--sheet-band: rgba(49, 138, 216, 0.14); }
+		[data-theme="dark"] .attendance-sheet-table { --sheet-zebra: #232A31;
+			--sheet-cross: rgba(120, 180, 240, 0.10); --sheet-band: rgba(120, 180, 240, 0.18); }
 		.attendance-sheet-empty { padding: 30px; text-align: center; }
 		table.attendance-sheet { border-collapse: separate; border-spacing: 0; width: 100%;
 			font-size: var(--text-sm); user-select: none; }
@@ -1079,10 +1125,25 @@ function inject_styles() {
 		table.attendance-sheet th:last-child, table.attendance-sheet td:last-child {
 			border-right: none; }
 		table.attendance-sheet th.day { cursor: pointer; }
+		/* every other row a shade darker, so a long row of days keeps its line */
+		table.attendance-sheet tbody tr:nth-child(even) td {
+			background-color: var(--sheet-zebra); }
+		/* the row and the column of the cursor are tinted rather than repainted: the name
+		   column is sticky and has to stay opaque, and a colour laid over the one already
+		   there keeps the stripes underneath visible */
+		table.attendance-sheet tr.hl-row td,
+		table.attendance-sheet td.day.hl-col, table.attendance-sheet th.day.hl-col {
+			background-image: linear-gradient(var(--sheet-cross), var(--sheet-cross)); }
+		/* which names and which days a dragged rectangle covers, marked at its edges */
+		table.attendance-sheet tr.in-selection td.employee,
+		table.attendance-sheet th.day.in-selection {
+			background-image: linear-gradient(var(--sheet-band), var(--sheet-band));
+			color: var(--text-color); }
 		table.attendance-sheet th.day:hover { color: var(--text-color);
 			background-color: var(--fg-hover-color); }
 		table.attendance-sheet th.day.selected, table.attendance-sheet th.day.selected:hover {
-			color: var(--text-color); background-color: rgba(49, 138, 216, 0.18);
+			color: var(--text-color); background-color: var(--fg-color);
+			background-image: linear-gradient(rgba(49, 138, 216, 0.18), rgba(49, 138, 216, 0.18));
 			box-shadow: inset 0 0 0 1px #318AD8; }
 		table.attendance-sheet td.day:hover { background-color: var(--fg-hover-color); }
 		/* not --highlight-color: it resolves to a lighter grey than the hover state,
