@@ -928,3 +928,7 @@ Attendance Sheet Abbreviation,Позначка в табелі
 "Shown in the attendance sheet on the days of this leave. Days of a leave without an abbreviation are marked as leave in general.","Показується в табелі у дні цієї відпустки. Дні відпустки без позначки відмічаються як відпустка загалом."
 Paid,Офіц,Leave Type Abbreviation
 Unpaid,ЗаВл,Leave Type Abbreviation
+Half Day/Other Half Present,Півдня / друга половина присутній
+Half Day/Other Half Absent,Півдня / друга половина відсутній
+Show Chart,Показати графік
+No approved attendance sheet found for this period.,За цей період немає погодженого табеля.

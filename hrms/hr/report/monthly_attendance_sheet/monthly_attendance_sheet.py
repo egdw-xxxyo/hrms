@@ -12,26 +12,27 @@ from pypika.terms import Criterion
 import frappe
 from frappe import _
 from frappe.query_builder import Case
-from frappe.query_builder.functions import Count, Extract, Sum
-from frappe.utils import cint, cstr, formatdate, getdate
+from frappe.query_builder.functions import Extract, Sum
+from frappe.utils import cint, cstr, flt, formatdate, getdate
 from frappe.utils.nestedset import get_descendants_of
 
+from hrms.hr.attendance_marks import (
+	STATUS_META,
+	get_abbr,
+	get_color,
+	get_day_label,
+	get_leave_abbreviations,
+)
+from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import get_approved_periods
 from hrms.utils import date_diff, get_date_range
 
 Filters = frappe._dict
 
-status_map = {
-	"Present": "P",
-	"Absent": "A",
-	"Half Day/Other Half Absent": "HD/A",
-	"Half Day/Other Half Present": "HD/P",
-	"Work From Home": "WFH",
-	"On Leave": "L",
-	"Holiday": "H",
-	"Weekly Off": "WO",
+# the report splits a half day by what the other half was; the statuses are its own
+half_day_map = {
+	"Half Day/Other Half Present": "Present",
+	"Half Day/Other Half Absent": "Absent",
 }
-
-day_abbr = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def execute(filters: Filters | None = None) -> tuple:
@@ -59,9 +60,16 @@ def execute(filters: Filters | None = None) -> tuple:
 		if filters.include_company_descendants:
 			filters.companies.extend(get_descendants_of("Company", filters.company))
 
+	filters.approved_periods = get_approved_periods_in_period(filters)
+
 	attendance_map = get_attendance_map(filters)
 	if not attendance_map:
-		frappe.msgprint(_("No attendance records found."), alert=True, indicator="orange")
+		message = (
+			_("No attendance records found.")
+			if filters.approved_periods
+			else _("No approved attendance sheet found for this period.")
+		)
+		frappe.msgprint(message, alert=True, indicator="orange")
 		return [], [], None, None
 
 	columns = get_columns(filters)
@@ -72,34 +80,65 @@ def execute(filters: Filters | None = None) -> tuple:
 		return columns, [], None, None
 
 	message = get_message() if not filters.summarized_view else ""
-	chart = get_chart_data(attendance_map, filters)
+	# the chart is off unless it is asked for: the legend below the table is what the sheet
+	# is read with, and the chart pushes it a screen down
+	chart = get_chart_data(attendance_map, filters) if filters.show_chart else None
 
 	return columns, data, message, chart
 
 
+def get_approved_periods_in_period(filters: Filters) -> dict[str, list[tuple]]:
+	"""The days of the period each employee has already been handed over to payroll."""
+	dates_in_period = get_dates_in_period(filters)
+
+	return get_approved_periods(dates_in_period[0], dates_in_period[-1], filters.employee)
+
+
+def is_approved(filters: Filters, employee: str, day: date) -> bool:
+	"""Whether a day of an employee sits inside a submitted sheet.
+
+	The report shows nothing else: what it prints is what payroll has been handed, and a
+	day still open in a manager's sheet can change tomorrow.
+	"""
+	return any(start <= day <= end for start, end in filters.approved_periods.get(employee, []))
+
+
+def get_mark(status: str) -> str:
+	"""The mark a status leaves on a day of the report.
+
+	A half day carries the letters of both halves, its own over the other one's, so the
+	split the report makes stays readable without a status of its own in the legend.
+	"""
+	other_half = half_day_map.get(status)
+
+	return f"{get_abbr('Half Day')}/{get_abbr(other_half)}" if other_half else get_abbr(status)
+
+
 def get_message() -> str:
-	message = ""
-	colors = [
-		"green",
-		"red",
-		"orange",
-		"#914EE3",
-		"green",
-		"#3187D8",
-		"#878787",
-		"#878787",
+	"""The legend under the table: every mark a day can carry, in reading order.
+
+	The half day sits in the legend as the two marks that actually reach a cell, since the
+	report never leaves it whole.
+	"""
+	statuses = [
+		entry for status in STATUS_META for entry in (half_day_map if status == "Half Day" else [status])
 	]
 
-	count = 0
-	for status, abbr in status_map.items():
-		message += f"""
-			<span style='border-left: 2px solid {colors[count]}; padding-right: 12px; padding-left: 5px; margin-right: 3px;'>
-				{_(status)} - {abbr}
+	entries = [
+		f"""
+			<span style='border-left: 2px solid {get_mark_color(status)}; padding-right: 12px; padding-left: 5px; margin-right: 3px;'>
+				{_(status)} - {get_mark(status)}
 			</span>
 		"""
-		count += 1
+		for status in statuses
+	]
 
-	return message
+	return "".join(entries)
+
+
+def get_mark_color(status: str) -> str:
+	"""A half day is coloured by the half day, whichever way the other half went."""
+	return get_color("Half Day" if status in half_day_map else status)
 
 
 def get_columns(filters: Filters) -> list[dict]:
@@ -137,47 +176,7 @@ def get_columns(filters: Filters) -> list[dict]:
 	)
 
 	if filters.summarized_view:
-		columns.extend(
-			[
-				{
-					"label": _("Total Present"),
-					"fieldname": "total_present",
-					"fieldtype": "Float",
-					"width": 110,
-				},
-				{"label": _("Total Leaves"), "fieldname": "total_leaves", "fieldtype": "Float", "width": 110},
-				{"label": _("Total Absent"), "fieldname": "total_absent", "fieldtype": "Float", "width": 110},
-				{
-					"label": _("Total Holidays"),
-					"fieldname": "total_holidays",
-					"fieldtype": "Float",
-					"width": 120,
-				},
-				{
-					"label": _("Unmarked Days"),
-					"fieldname": "unmarked_days",
-					"fieldtype": "Float",
-					"width": 130,
-				},
-			]
-		)
-		columns.extend(get_columns_for_leave_types())
-		columns.extend(
-			[
-				{
-					"label": _("Total Late Entries"),
-					"fieldname": "total_late_entries",
-					"fieldtype": "Float",
-					"width": 140,
-				},
-				{
-					"label": _("Total Early Exits"),
-					"fieldname": "total_early_exits",
-					"fieldtype": "Float",
-					"width": 140,
-				},
-			]
-		)
+		columns.extend(get_columns_for_totals())
 	else:
 		columns.append({"label": _("Shift"), "fieldname": "shift", "fieldtype": "Data", "width": 120})
 		columns.extend(get_columns_for_days(filters))
@@ -185,13 +184,31 @@ def get_columns(filters: Filters) -> list[dict]:
 	return columns
 
 
-def get_columns_for_leave_types() -> list[dict]:
-	leave_types = frappe.db.get_all("Leave Type", pluck="name")
-	types = []
-	for entry in leave_types:
-		types.append({"label": entry, "fieldname": frappe.scrub(entry), "fieldtype": "Float", "width": 120})
+def get_columns_for_totals() -> list[dict]:
+	"""The totals of the summarized view, the same set the attendance sheet page shows.
 
-	return types
+	Absence is the unpaid kind and nothing else, which is what the note in the label says
+	and what makes the column readable by payroll.
+	"""
+	labels = {
+		"total_present": _("Present Days"),
+		"total_leave": _("Leave Days"),
+		"total_sick": _("Sick Days"),
+		"total_absent": f"{_('Absent Days')}, {_('at their own expense')}",
+		"overtime_hours": _("Overtime Hours"),
+		"shortfall_hours": _("Shortfall Hours"),
+	}
+
+	return [
+		{
+			"label": label,
+			"fieldname": fieldname,
+			"fieldtype": "Float",
+			# the note the sheet page puts under the label has to fit on the line here
+			"width": 250 if fieldname == "total_absent" else 150,
+		}
+		for fieldname, label in labels.items()
+	]
 
 
 def get_columns_for_days(filters: Filters) -> list[dict]:
@@ -199,11 +216,15 @@ def get_columns_for_days(filters: Filters) -> list[dict]:
 	dates_in_period = get_dates_in_period(filters)
 	for d in dates_in_period:
 		d = getdate(d)
-		# gets abbr from weekday number
-		abbr_weekday = day_abbr[d.weekday()]
-		# sets days as 1 Mon, 2 Tue, 3 Wed
-		label = f"{d.day} {abbr_weekday}"
-		days.append({"label": label, "fieldtype": "Data", "fieldname": d.strftime("%d-%m-%Y"), "width": 65})
+		days.append(
+			{
+				"label": get_day_label(d),
+				"fieldtype": "Data",
+				"fieldname": d.strftime("%d-%m-%Y"),
+				"align": "center",
+				"width": 55,
+			}
+		)
 
 	return days
 
@@ -236,6 +257,7 @@ def get_date_condition(docfield: Field, filters: Filters) -> Criterion:
 def get_data(filters: Filters, attendance_map: dict) -> list[dict]:
 	employee_details, group_by_param_values = get_employee_related_details(filters)
 	holiday_map = get_holiday_map(filters)
+	notes = {} if filters.summarized_view else get_day_notes(filters)
 	data = []
 
 	if filters.group_by:
@@ -245,14 +267,14 @@ def get_data(filters: Filters, attendance_map: dict) -> list[dict]:
 			if not value:
 				continue
 
-			records = get_rows(employee_details[value], filters, holiday_map, attendance_map)
+			records = get_rows(employee_details[value], filters, holiday_map, attendance_map, notes)
 
 			if records:
 				data.append({group_by_column: value})
 				data.extend(records)
 
 	else:
-		data = get_rows(employee_details, filters, holiday_map, attendance_map)
+		data = get_rows(employee_details, filters, holiday_map, attendance_map, notes)
 
 	return data
 
@@ -303,6 +325,60 @@ def get_attendance_map(filters: Filters) -> dict:
 	return attendance_map
 
 
+def get_day_notes(filters: Filters) -> dict[tuple, dict]:
+	"""The line under the mark of a day, keyed by employee and date.
+
+	Either the hours the day ran over or short of the shift, or the kind of leave it was —
+	the same second line the attendance sheet page draws, and in the same order of
+	precedence: hours first, because they are the exception, and the leave otherwise.
+	"""
+	Attendance = frappe.qb.DocType("Attendance")
+	query = (
+		frappe.qb.from_(Attendance)
+		.select(
+			Attendance.employee,
+			Attendance.attendance_date,
+			Attendance.overtime_hours,
+			Attendance.shortfall_hours,
+			Attendance.leave_type,
+		)
+		.where(
+			(Attendance.docstatus == 1)
+			& (Attendance.company.isin(filters.companies))
+			& get_date_condition(Attendance.attendance_date, filters)
+		)
+	)
+
+	if filters.employee:
+		query = query.where(Attendance.employee == filters.employee)
+
+	leave_abbrs = get_leave_abbreviations()
+	notes = {}
+
+	for entry in query.run(as_dict=True):
+		if not is_approved(filters, entry.employee, getdate(entry.attendance_date)):
+			continue
+
+		note = get_note(entry, leave_abbrs)
+		if note:
+			notes[(entry.employee, entry.attendance_date)] = note
+
+	return notes
+
+
+def get_note(entry: dict, leave_abbrs: dict) -> dict | None:
+	"""The second line of a day: its text and which of the sheet's three kinds it is."""
+	if entry.overtime_hours:
+		return {"text": f"+{flt(entry.overtime_hours):g}", "kind": "over"}
+
+	if entry.shortfall_hours:
+		return {"text": f"-{flt(entry.shortfall_hours):g}", "kind": "under"}
+
+	abbr = leave_abbrs.get(entry.leave_type)
+
+	return {"text": abbr, "kind": "leave"} if abbr else None
+
+
 def get_attendance_records(filters: Filters) -> list[dict]:
 	Attendance = frappe.qb.DocType("Attendance")
 	attendance_date_condition = get_date_condition(Attendance.attendance_date, filters)
@@ -337,7 +413,12 @@ def get_attendance_records(filters: Filters) -> list[dict]:
 		query = query.where(Attendance.employee == filters.employee)
 	query = query.orderby(Attendance.employee, Attendance.attendance_date)
 
-	return query.run(as_dict=1)
+	# a day is part of the report only once the sheet holding it has been handed over
+	return [
+		entry
+		for entry in query.run(as_dict=1)
+		if is_approved(filters, entry.employee, getdate(entry.attendance_date))
+	]
 
 
 def get_employee_related_details(filters: Filters) -> tuple[dict, list]:
@@ -439,7 +520,9 @@ def get_holiday_map(filters: Filters) -> dict[str, list[dict]]:
 	return holiday_map
 
 
-def get_rows(employee_details: dict, filters: Filters, holiday_map: dict, attendance_map: dict) -> list[dict]:
+def get_rows(
+	employee_details: dict, filters: Filters, holiday_map: dict, attendance_map: dict, notes: dict
+) -> list[dict]:
 	records = []
 	default_holiday_list = frappe.get_cached_value("Company", filters.company, "default_holiday_list")
 
@@ -448,29 +531,18 @@ def get_rows(employee_details: dict, filters: Filters, holiday_map: dict, attend
 		holidays = holiday_map.get(emp_holiday_list)
 
 		if filters.summarized_view:
-			attendance = get_attendance_status_for_summarized_view(
-				employee, filters, holidays, details.joined_in_current_period, details.joined_date
-			)
-			if not attendance:
+			totals = get_totals(employee, filters)
+			if not any(totals.values()):
 				continue
 
-			leave_summary = get_leave_summary(employee, filters)
-			entry_exits_summary = get_entry_exits_summary(employee, filters)
-
-			row = {"employee": employee, "employee_name": details.employee_name}
-			set_defaults_for_summarized_view(filters, row)
-			row.update(attendance)
-			row.update(leave_summary)
-			row.update(entry_exits_summary)
-
-			records.append(row)
+			records.append({"employee": employee, "employee_name": details.employee_name, **totals})
 		else:
 			employee_attendance = attendance_map.get(employee)
 			if not employee_attendance:
 				continue
 
 			attendance_for_employee = get_attendance_status_for_detailed_view(
-				employee, filters, employee_attendance, holidays
+				employee, filters, employee_attendance, holidays, notes
 			)
 			# set employee details in the first row
 			for record in attendance_for_employee:
@@ -481,99 +553,8 @@ def get_rows(employee_details: dict, filters: Filters, holiday_map: dict, attend
 	return records
 
 
-def set_defaults_for_summarized_view(filters, row):
-	for entry in get_columns(filters):
-		if entry.get("fieldtype") == "Float":
-			row[entry.get("fieldname")] = 0.0
-
-
-def get_attendance_status_for_summarized_view(
-	employee: str, filters: Filters, holidays: list, joined_in_current_period: int, joined_date: int
-) -> dict:
-	"""Returns dict of attendance status for employee like
-	{'total_present': 1.5, 'total_leaves': 0.5, 'total_absent': 13.5, 'total_holidays': 8, 'unmarked_days': 5}
-	"""
-	summary, attendance_days = get_attendance_summary_and_days(employee, filters)
-	if not any(summary.values()):
-		return {}
-
-	total_days = get_dates_in_period(filters)
-	total_holidays = total_unmarked_days = 0
-
-	for d in total_days:
-		d = getdate(d)
-		if d.day in attendance_days or (joined_in_current_period and d < joined_date):
-			continue
-
-		status = get_holiday_status(d, holidays)
-		if status in ["Weekly Off", "Holiday"]:
-			total_holidays += 1
-		elif not status:
-			total_unmarked_days += 1
-
-	return {
-		"total_present": summary.total_present + summary.total_half_days,
-		"total_leaves": summary.total_leaves + summary.total_half_days,
-		"total_absent": summary.total_absent,
-		"total_holidays": total_holidays,
-		"unmarked_days": total_unmarked_days,
-	}
-
-
-def get_attendance_summary_and_days(employee: str, filters: Filters) -> tuple[dict, list]:
-	Attendance = frappe.qb.DocType("Attendance")
-
-	present_case = (
-		frappe.qb.terms.Case()
-		.when(((Attendance.status == "Present") | (Attendance.status == "Work From Home")), 1)
-		.else_(0)
-	)
-	sum_present = Sum(present_case).as_("total_present")
-
-	absent_case = frappe.qb.terms.Case().when(Attendance.status == "Absent", 1).else_(0)
-	sum_absent = Sum(absent_case).as_("total_absent")
-
-	leave_case = frappe.qb.terms.Case().when(Attendance.status == "On Leave", 1).else_(0)
-	sum_leave = Sum(leave_case).as_("total_leaves")
-
-	half_day_case = frappe.qb.terms.Case().when(Attendance.status == "Half Day", 0.5).else_(0)
-	sum_half_day = Sum(half_day_case).as_("total_half_days")
-
-	attendance_date_condition = get_date_condition(Attendance.attendance_date, filters)
-
-	summary = (
-		frappe.qb.from_(Attendance)
-		.select(
-			sum_present,
-			sum_absent,
-			sum_leave,
-			sum_half_day,
-		)
-		.where(
-			(Attendance.docstatus == 1)
-			& (Attendance.employee == employee)
-			& (Attendance.company.isin(filters.companies))
-			& (attendance_date_condition)
-		)
-	).run(as_dict=True)
-
-	days = (
-		frappe.qb.from_(Attendance)
-		.select(Extract("day", Attendance.attendance_date).as_("day_of_month"))
-		.distinct()
-		.where(
-			(Attendance.docstatus == 1)
-			& (Attendance.employee == employee)
-			& (Attendance.company.isin(filters.companies))
-			& (attendance_date_condition)
-		)
-	).run(pluck=True)
-
-	return summary[0], days
-
-
 def get_attendance_status_for_detailed_view(
-	employee: str, filters: Filters, employee_attendance: dict, holidays: list
+	employee: str, filters: Filters, employee_attendance: dict, holidays: list, notes: dict
 ) -> list[dict]:
 	"""Returns list of shift-wise attendance status for employee
 	[
@@ -585,7 +566,9 @@ def get_attendance_status_for_detailed_view(
 	attendance_values = []
 
 	for shift, status_dict in employee_attendance.items():
-		row = {"shift": shift}
+		# the marks ride along the row rather than in a column of their own: the cell keeps
+		# the plain letters, which is what an export of the report should carry
+		row = {"shift": shift, "marks": {}}
 		"""{
 	            'Morning Shift': {1: 'Present', 2: 'Absent', ...}
 	            'Evening Shift': {1: 'Absent', 2: 'Present', ...}
@@ -595,11 +578,16 @@ def get_attendance_status_for_detailed_view(
 
 			status = status_dict.get(d)
 
-			if status is None and holidays:
+			# a holiday of an unapproved day is as unhanded as the rest of it
+			if status is None and holidays and is_approved(filters, employee, d):
 				status = get_holiday_status(d, holidays)
 
-			abbr = status_map.get(status, "")
-			row[d.strftime("%d-%m-%Y")] = abbr
+			fieldname = d.strftime("%d-%m-%Y")
+			row[fieldname] = get_mark(status)
+			row["marks"][fieldname] = {
+				"color": get_mark_color(status),
+				"note": notes.get((employee, d)),
+			}
 
 		attendance_values.append(row)
 
@@ -619,63 +607,72 @@ def get_holiday_status(holiday_date: date, holidays: list) -> str:
 	return status
 
 
-def get_leave_summary(employee: str, filters: Filters) -> dict[str, float]:
-	"""Returns a dict of leave type and corresponding leaves taken by employee like:
-	{'leave_without_pay': 1.0, 'sick_leave': 2.0}
+def get_totals(employee: str, filters: Filters) -> dict[str, float]:
+	"""The totals of the summarized view, read the way the attendance sheet page reads them.
+
+	A half day is half a day of presence plus half of whatever the other half was, and
+	absence counts only what payroll treats as unpaid — a leave of any kind is a leave.
+	The hours are the ones entered on the attendance itself.
 	"""
+	approved = get_approved_condition(employee, filters)
+	if approved is None:
+		return dict.fromkeys(get_total_fields(), 0.0)
+
 	Attendance = frappe.qb.DocType("Attendance")
-	day_case = frappe.qb.terms.Case().when(Attendance.status == "Half Day", 0.5).else_(1)
-	sum_leave_days = Sum(day_case).as_("leave_days")
+	half_day = Attendance.status == "Half Day"
 
-	attendance_date_condition = get_date_condition(Attendance.attendance_date, filters)
+	def days(condition, weight: float = 1) -> Sum:
+		"""The days matching a condition, each one worth `weight` of a day."""
+		return Sum(frappe.qb.terms.Case().when(condition, weight).else_(0))
 
-	leave_details = (
+	def other_half(status: str):
+		return half_day & (Attendance.half_day_status == status)
+
+	totals = (
 		frappe.qb.from_(Attendance)
-		.select(Attendance.leave_type, sum_leave_days)
-		.where(
-			(Attendance.employee == employee)
-			& (Attendance.docstatus == 1)
-			& (Attendance.company.isin(filters.companies))
-			& ((Attendance.leave_type.isnotnull()) | (Attendance.leave_type != ""))
-			& (attendance_date_condition)
+		.select(
+			(
+				days(Attendance.status.isin(["Present", "Work From Home"]))
+				+ days(half_day, 0.5)
+				+ days(other_half("Present"), 0.5)
+			).as_("total_present"),
+			days(Attendance.status == "On Leave").as_("total_leave"),
+			days(Attendance.status == "Sick Leave").as_("total_sick"),
+			(days(Attendance.status == "Absent") + days(other_half("Absent"), 0.5)).as_("total_absent"),
+			Sum(Attendance.overtime_hours).as_("overtime_hours"),
+			Sum(Attendance.shortfall_hours).as_("shortfall_hours"),
 		)
-		.groupby(Attendance.leave_type)
-	).run(as_dict=True)
-
-	leaves = {}
-	for d in leave_details:
-		leave_type = frappe.scrub(d.leave_type)
-		leaves[leave_type] = d.leave_days
-
-	return leaves
-
-
-def get_entry_exits_summary(employee: str, filters: Filters) -> dict[str, float]:
-	"""Returns total late entries and total early exits for employee like:
-	{'total_late_entries': 5, 'total_early_exits': 2}
-	"""
-	Attendance = frappe.qb.DocType("Attendance")
-
-	late_entry_case = frappe.qb.terms.Case().when(Attendance.late_entry == "1", "1")
-	count_late_entries = Count(late_entry_case).as_("total_late_entries")
-
-	early_exit_case = frappe.qb.terms.Case().when(Attendance.early_exit == "1", "1")
-	count_early_exits = Count(early_exit_case).as_("total_early_exits")
-
-	attendance_date_condition = get_date_condition(Attendance.attendance_date, filters)
-
-	entry_exits = (
-		frappe.qb.from_(Attendance)
-		.select(count_late_entries, count_early_exits)
 		.where(
 			(Attendance.docstatus == 1)
 			& (Attendance.employee == employee)
 			& (Attendance.company.isin(filters.companies))
-			& (attendance_date_condition)
+			& get_date_condition(Attendance.attendance_date, filters)
+			& approved
 		)
 	).run(as_dict=True)
 
-	return entry_exits[0]
+	return {field: flt(value) for field, value in totals[0].items()}
+
+
+def get_approved_condition(employee: str, filters: Filters) -> Criterion | None:
+	"""The days of this employee the totals may count, None if the period holds none.
+
+	The summarized view sums the same days the detailed one prints, so the two cannot
+	disagree about what has been handed over.
+	"""
+	Attendance = frappe.qb.DocType("Attendance")
+	periods = filters.approved_periods.get(employee)
+
+	if not periods:
+		return None
+
+	return Criterion.any(
+		(Attendance.attendance_date >= start) & (Attendance.attendance_date <= end) for start, end in periods
+	)
+
+
+def get_total_fields() -> list[str]:
+	return [column["fieldname"] for column in get_columns_for_totals()]
 
 
 @frappe.whitelist()
