@@ -95,7 +95,7 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 			fieldname: "group_by",
 			label: __("Group By"),
 			fieldtype: "Select",
-			options: ["", "Branch", "Grade", "Department", "Designation"],
+			options: ["", "Branch", "Grade", "Department", "Designation", "Manager"],
 		},
 		{
 			fieldname: "include_company_descendants",
@@ -108,12 +108,30 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 			label: __("Summarized View"),
 			fieldtype: "Check",
 			default: 0,
+			depends_on: "eval:!doc.unsubmitted_view",
 		},
 		{
 			fieldname: "show_chart",
 			label: __("Show Chart"),
 			fieldtype: "Check",
 			default: 0,
+			depends_on: "eval:!doc.unsubmitted_view",
+		},
+		{
+			fieldname: "unsubmitted_view",
+			label: __("Unsubmitted Sheets"),
+			fieldtype: "Check",
+			default: 0,
+			// the report keeps one table across runs and only hands it new rows, so the
+			// options it was built with — the row height among them — outlive the view
+			// they were meant for. Toggling the view throws the table away instead
+			on_change: (report) => {
+				if (report.datatable) {
+					report.datatable.destroy();
+					report.datatable = null;
+				}
+				report.refresh();
+			},
 		},
 	],
 	onload: function () {
@@ -129,7 +147,9 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 		});
 	},
 	formatter: function (value, row, column, data, default_formatter) {
-		if (column.fieldtype === "Float") return format_total(value);
+		const unsubmitted = frappe.query_report.get_filter_value("unsubmitted_view");
+
+		if (!unsubmitted && column.fieldtype === "Float") return format_total(value);
 
 		value = default_formatter(value, row, column, data);
 		const group_by = frappe.query_report.get_filter_value("group_by");
@@ -138,27 +158,47 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 			value = "<strong>" + value + "</strong>";
 		}
 
+		if (unsubmitted) return value;
+
 		const mark = data && data.marks && data.marks[column.fieldname];
 
 		return mark ? get_mark_html(value, mark) : value;
 	},
-	get_datatable_options: (options) => ({
-		...options,
-		// a day carries two lines, the mark and the note under it, the way the sheet page
-		// draws it; the stock 33 fits only one. The number has to be the real height of
-		// the two, because it is also what the virtual scroll positions rows by, and the
-		// cell hides whatever does not fit — see the line heights in style_days
-		cellHeight: 50,
-	}),
+	// a day carries two lines, the mark and the note under it, the way the sheet page
+	// draws it; the stock 33 fits only one. The number has to be the real height of the
+	// two, because it is also what the virtual scroll positions rows by, and the cell
+	// hides whatever does not fit — see the line heights in style_days. The unsubmitted
+	// view carries no days and is left at the height every other report is drawn with
+	get_datatable_options: (options) =>
+		frappe.query_report.get_filter_value("unsubmitted_view")
+			? options
+			: { ...options, cellHeight: 50 },
 	after_datatable_render: () => {
 		// the wrapper keeps the space of the chart it last drew, so it is hidden by hand
 		if (!frappe.query_report.get_filter_value("show_chart")) frappe.query_report.$chart.hide();
+
+		// the unsubmitted view is a plain list of employees: none of the sheet's dressing
+		// belongs to it, and what an earlier run left behind is taken back off
+		if (frappe.query_report.get_filter_value("unsubmitted_view")) return strip_sheet_style();
+
 		style_days();
 		move_scrollbar();
 		stripe_rows();
 		follow_cursor();
 	},
 };
+
+// what style_days, move_scrollbar and stripe_rows hung on the report, taken back off so
+// a table that is not the sheet is drawn the way every other report is
+function strip_sheet_style() {
+	const report = frappe.query_report.$report[0];
+	const strip = report.querySelector(".attendance-marks-scrollbar");
+
+	frappe.query_report.$report.removeClass("attendance-marks");
+	if (strip) strip.remove();
+	get_sheet_style("attendance-marks-stripes").textContent = "";
+	get_sheet_style("attendance-marks-cursor").textContent = "";
+}
 
 // the day cells are the sheet page's cells: the same class names, the same rules, down to
 // the padding. The rest is what the datatable costs — its cell is a fixed box that hides
@@ -174,9 +214,16 @@ function style_days() {
 	const style = document.createElement("style");
 	style.id = table_class;
 	style.textContent = `
-		.${table_class} { --sheet-zebra: #F7F8F9; --sheet-cross: rgba(49, 138, 216, 0.08); }
-		[data-theme="dark"] .${table_class} { --sheet-zebra: #232A31;
-			--sheet-cross: rgba(120, 180, 240, 0.1); }
+		.${table_class} { --sheet-zebra: #F4F4F5; --sheet-cross: rgba(49, 138, 216, 0.08);
+			--sheet-off: #FFD1D1; }
+		/* the tint has to carry further in the dark than in the light: the stripes are
+		   already a step above the ground there, and a cursor as faint as the one the
+		   light theme needs reads as just another stripe */
+		[data-theme="dark"] .${table_class} { --sheet-zebra: #26262A;
+			--sheet-cross: rgba(120, 180, 240, 0.22); --sheet-off: #5A2A2A; }
+		/* a day nobody was meant to work. Named through the row as well, so that the rule
+		   outweighs the stripes, which are written per row and land in a later sheet */
+		.${table_class} .dt-row .dt-cell:has(.off) { background-color: var(--sheet-off); }
 		.${table_class} .dt-cell__content { padding: 6px 4px; }
 		.${table_class} .status { display: block; line-height: 1.4; }
 		.${table_class} .hours { display: block; font-size: var(--text-xs); line-height: 1.2; }
@@ -286,7 +333,9 @@ function grab_scrollbar(event, strip, body) {
 	document.addEventListener("mouseup", drop);
 }
 
-// every other row a shade darker. The rule is written per row rather than with
+// every other row a shade darker, in a grey without a tone of its own: the cursor is the
+// only blue in the table, and a stripe that shares its tone reads as one. The rule is
+// written per row rather than with
 // :nth-child, because the table only keeps the visible rows in the DOM and their position
 // among them shifts as it scrolls — the stripes would swap under the cursor
 function stripe_rows() {
@@ -357,8 +406,9 @@ function get_mark_html(value, mark) {
 				mark.note.text,
 		  )}</span>`
 		: "";
+	const off = mark.off ? " off" : "";
 
-	return `<span class="status" style="color:${mark.color}">${value}</span>${note}`;
+	return `<span class="status${off}" style="color:${mark.color}">${value}</span>${note}`;
 }
 
 function set_reqd_filter(fieldname, is_reqd) {

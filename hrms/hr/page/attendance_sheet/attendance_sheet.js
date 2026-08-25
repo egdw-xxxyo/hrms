@@ -24,6 +24,10 @@ const STATUS_META = {
 
 const ATTENDANCE_STATUSES = ["Present", "Work From Home", "Half Day", "Absent", "Sick Leave"];
 
+// the days nobody was meant to work: a cell carries one of these only when it holds no
+// attendance and no leave of its own, so a weekend somebody did work is not among them
+const NON_WORKING_STATUSES = ["Weekly Off", "Holiday"];
+
 // the statuses worth a single click on a whole day, the rest go through the dialog
 const QUICK_STATUSES = ["Present", "Work From Home", "Absent", "Sick Leave"];
 
@@ -844,7 +848,8 @@ function get_employee_html(row) {
 function get_cell_html(row, date) {
 	const cell = row.days[date];
 	const meta = STATUS_META[cell.status] || {};
-	const classes = ["day", cell.locked ? "locked" : ""].filter(Boolean).join(" ");
+	const off = NON_WORKING_STATUSES.includes(cell.status) ? "off" : "";
+	const classes = ["day", cell.locked ? "locked" : "", off].filter(Boolean).join(" ");
 	// the cells of one leave (or of one attendance) light up together on hover
 	const group = cell.leave_application
 		? `Leave Application:${cell.leave_application}`
@@ -1184,10 +1189,15 @@ function inject_styles() {
 		.attendance-sheet-table { overflow-y: auto; overflow-x: hidden;
 			background-color: var(--fg-color);
 			border: 1px solid var(--border-color); border-radius: var(--border-radius-md);
-			--sheet-zebra: #F7F8F9; --sheet-cross: rgba(49, 138, 216, 0.08);
-			--sheet-band: rgba(49, 138, 216, 0.14); }
-		[data-theme="dark"] .attendance-sheet-table { --sheet-zebra: #232A31;
-			--sheet-cross: rgba(120, 180, 240, 0.10); --sheet-band: rgba(120, 180, 240, 0.18); }
+			--sheet-zebra: #F4F4F5; --sheet-cross: rgba(49, 138, 216, 0.08);
+			--sheet-band: rgba(49, 138, 216, 0.14); --sheet-off: #FFD1D1; }
+		/* the tint has to carry further in the dark than in the light: the stripes are
+		   already a step above the ground there, and a cursor as faint as the one the
+		   light theme needs reads as just another stripe. The band keeps its lead over
+		   the cursor, so a dragged rectangle still stands out inside it */
+		[data-theme="dark"] .attendance-sheet-table { --sheet-zebra: #26262A;
+			--sheet-cross: rgba(120, 180, 240, 0.22); --sheet-band: rgba(120, 180, 240, 0.36);
+			--sheet-off: #5A2A2A; }
 		/* the track is drawn even when nothing is being dragged, so that there is
 		   something to aim at; the thumb darkens under the cursor */
 		.attendance-sheet-scrollbar { position: relative; height: 14px; margin-top: 6px;
@@ -1223,9 +1233,16 @@ function inject_styles() {
 		table.attendance-sheet th:last-child, table.attendance-sheet td:last-child {
 			border-right: none; }
 		table.attendance-sheet th.day { cursor: pointer; }
-		/* every other row a shade darker, so a long row of days keeps its line */
+		/* every other row a shade darker, so a long row of days keeps its line. Grey
+		   without a tone of its own on purpose: the cursor and the selection are the
+		   only blue in the table, and a stripe that shares their tone reads as one */
 		table.attendance-sheet tbody tr:nth-child(even) td {
 			background-color: var(--sheet-zebra); }
+		/* a day nobody was meant to work. A day carries the status only when it holds no
+		   attendance and no leave, so a weekend that was worked keeps the plain ground.
+		   It stands above the stripes and below everything the cursor does, which is what
+		   the order of these three rules says */
+		table.attendance-sheet td.day.off { background-color: var(--sheet-off); }
 		/* the row and the column of the cursor are tinted rather than repainted: the name
 		   column is sticky and has to stay opaque, and a colour laid over the one already
 		   there keeps the stripes underneath visible */
