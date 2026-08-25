@@ -13,7 +13,7 @@ import frappe
 from frappe import _
 from frappe.utils import cstr, flt, formatdate, getdate
 
-from hrms.hr.attendance_marks import get_leave_abbreviations
+from hrms.hr.attendance_marks import get_leave_abbreviations, get_unpaid_leave_types
 from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import (
 	get_approval_for,
 	validate_not_approved,
@@ -183,6 +183,7 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 	holidays = get_holiday_map(employees, company, from_date, to_date)
 	locks = get_lock_map(list(employees), from_date, to_date)
 	leave_abbrs = get_leave_abbreviations()
+	unpaid_types = get_unpaid_leave_types()
 
 	rows = [
 		{
@@ -197,6 +198,7 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 					holidays.get(details.holiday_list) or {},
 					locks,
 					leave_abbrs,
+					unpaid_types,
 				)
 				for d in dates
 			},
@@ -222,6 +224,7 @@ def get_cell(
 	holidays: dict,
 	locks: dict,
 	leave_abbrs: dict,
+	unpaid_types: set,
 ) -> dict:
 	entry = attendance.get(employee, {}).get(day)
 	leave = leaves.get(employee, {}).get(day)
@@ -232,12 +235,15 @@ def get_cell(
 	if not status:
 		status = holidays.get(day)
 
+	leave_type = (entry.leave_type if entry else None) or (leave.leave_type if leave else None)
+
 	return {
 		"status": status or "",
 		"half_day_status": (entry.half_day_status if entry else None) or "",
 		"attendance": entry.name if entry else None,
 		"leave_application": (entry.leave_application if entry else None) or (leave.name if leave else None),
 		"leave_abbr": (leave_abbrs.get(leave.leave_type) if leave else None) or "",
+		"unpaid_leave": leave_type in unpaid_types,
 		"overtime_hours": flt(entry.overtime_hours) if entry else 0.0,
 		"shortfall_hours": flt(entry.shortfall_hours) if entry else 0.0,
 		"shift": (entry.shift if entry else None) or "",
@@ -265,6 +271,7 @@ def get_attendance_map(employees: list[str], from_date, to_date) -> dict:
 			"attendance_date",
 			"status",
 			"half_day_status",
+			"leave_type",
 			"overtime_hours",
 			"shortfall_hours",
 			"leave_application",
@@ -775,7 +782,8 @@ def get_totals(cells) -> dict:
 		if status in ("Present", "Work From Home"):
 			totals["total_present"] += 1
 		elif status == "On Leave":
-			totals["total_leave"] += 1
+			# a leave nobody pays for is an absence at the employee's own expense
+			totals["total_absent" if cell["unpaid_leave"] else "total_leave"] += 1
 		elif status == "Sick Leave":
 			totals["total_sick"] += 1
 		elif status == "Absent":

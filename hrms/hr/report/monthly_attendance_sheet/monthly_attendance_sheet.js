@@ -154,6 +154,7 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 		// the wrapper keeps the space of the chart it last drew, so it is hidden by hand
 		if (!frappe.query_report.get_filter_value("show_chart")) frappe.query_report.$chart.hide();
 		style_days();
+		move_scrollbar();
 		stripe_rows();
 		follow_cursor();
 	},
@@ -183,8 +184,106 @@ function style_days() {
 		.${table_class} .hours.over { color: var(--green-500, green); }
 		.${table_class} .hours.under { color: var(--red-500, red); }
 		.${table_class} .dt-row-filter .dt-cell { height: 33px; }
+		/* sideways the rows move only under a script, from the strip below the table.
+		   The table writes its own overflow onto the element, hence the shout */
+		.${table_class} .dt-scrollable { overflow-x: hidden !important; }
+		/* the track is drawn even when nothing is being dragged, so that there is
+		   something to aim at; the thumb darkens under the cursor */
+		.${table_class} .attendance-marks-scrollbar { position: relative; height: 14px;
+			margin-top: 6px; border: 1px solid var(--border-color); border-radius: 7px;
+			background-color: var(--control-bg, var(--fg-color)); }
+		.${table_class} .attendance-marks-scrollbar .thumb { position: absolute; top: 1px;
+			bottom: 1px; left: 0; min-width: 40px; border-radius: 6px; cursor: grab;
+			background-color: var(--gray-500, #6B7280); opacity: 0.35;
+			transition: opacity 120ms ease; }
+		.${table_class} .attendance-marks-scrollbar:hover .thumb { opacity: 0.7; }
+		.${table_class} .attendance-marks-scrollbar .thumb:active { opacity: 0.9;
+			cursor: grabbing; }
 	`;
 	document.head.appendChild(style);
+}
+
+// the horizontal scrollbar of the table, taken out from under its last row. An overlay
+// bar is drawn inside the box it belongs to, over whichever row happens to be at the
+// bottom of it; the rows are left scrolling sideways under a script only, and the strip
+// below the table is what the reader drags instead
+function move_scrollbar() {
+	const report = frappe.query_report.$report[0];
+	const body = report.querySelector(".dt-scrollable");
+
+	if (!body) return;
+
+	let strip = report.querySelector(".attendance-marks-scrollbar");
+
+	if (!strip) {
+		strip = document.createElement("div");
+		strip.className = "attendance-marks-scrollbar";
+		strip.innerHTML = '<div class="thumb"></div>';
+		report.appendChild(strip);
+		// the box is a new element after every run, so it is looked up rather than held
+		window.addEventListener("resize", () => {
+			const current = report.querySelector(".dt-scrollable");
+			if (current) paint_scrollbar(strip, current);
+		});
+	}
+
+	// the table is built anew on every run, so the strip is pointed at the box of the day
+	strip.onmousedown = (event) => grab_scrollbar(event, strip, body);
+
+	if (!body.dataset.scrollsFromStrip) {
+		body.dataset.scrollsFromStrip = "yes";
+		body.addEventListener("wheel", (event) => {
+			if (!event.deltaX) return;
+
+			event.preventDefault();
+			body.scrollLeft += event.deltaX;
+			paint_scrollbar(strip, body);
+		});
+	}
+
+	paint_scrollbar(strip, body);
+}
+
+// the thumb, sized and placed by how much of itself the table is showing
+function paint_scrollbar(strip, body) {
+	const shown = body.clientWidth / body.scrollWidth;
+
+	strip.style.display = shown < 1 ? "" : "none";
+	if (shown >= 1) return;
+
+	const width = Math.max(shown * strip.clientWidth, 40);
+	const scrolled = body.scrollLeft / (body.scrollWidth - body.clientWidth);
+
+	strip.firstElementChild.style.width = `${width}px`;
+	strip.firstElementChild.style.left = `${scrolled * (strip.clientWidth - width)}px`;
+}
+
+// dragging the thumb, or a click anywhere on the track to jump there
+function grab_scrollbar(event, strip, body) {
+	const thumb = strip.firstElementChild;
+	const track = strip.getBoundingClientRect();
+	const grip =
+		event.target === thumb
+			? event.clientX - thumb.getBoundingClientRect().left
+			: thumb.offsetWidth / 2;
+
+	const drag = (moved) => {
+		const span = strip.clientWidth - thumb.offsetWidth;
+		const offset = Math.min(Math.max(moved.clientX - track.left - grip, 0), span);
+
+		body.scrollLeft = span ? (offset / span) * (body.scrollWidth - body.clientWidth) : 0;
+		paint_scrollbar(strip, body);
+	};
+
+	const drop = () => {
+		document.removeEventListener("mousemove", drag);
+		document.removeEventListener("mouseup", drop);
+	};
+
+	event.preventDefault();
+	drag(event);
+	document.addEventListener("mousemove", drag);
+	document.addEventListener("mouseup", drop);
 }
 
 // every other row a shade darker. The rule is written per row rather than with

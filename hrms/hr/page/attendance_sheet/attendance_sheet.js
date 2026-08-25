@@ -106,9 +106,34 @@ class AttendanceSheet {
 		);
 		this.$legend = $('<div class="attendance-sheet-legend"></div>').appendTo(this.$container);
 		this.$table = $('<div class="attendance-sheet-table"></div>').appendTo(this.$container);
+		// a scrollbar of our own, under the table rather than inside it: the one the
+		// browser draws would ride over the last row, hides itself until something
+		// moves, and cannot be aimed at. The table keeps its own scrolling box, which
+		// is what the header and the name column stay put in
+		this.$scrollbar = $(
+			'<div class="attendance-sheet-scrollbar"><div class="thumb"></div></div>',
+		).appendTo(this.$container);
 	}
 
 	bind_events() {
+		this.$scrollbar.on("mousedown", (e) => this.grab_scrollbar(e));
+
+		// a sideways wheel over the table moves it, since the table itself no longer
+		// takes one: everything sideways goes through us now
+		this.$table.on("wheel", (e) => {
+			const step = e.originalEvent.deltaX;
+			if (!step) return;
+
+			e.preventDefault();
+			this.$table[0].scrollLeft += step;
+			this.paint_scrollbar();
+		});
+
+		$(window).on(
+			"resize.attendance_sheet",
+			frappe.utils.debounce(() => this.size_table(), 100),
+		);
+
 		this.$table.on("mousedown", "td.day", (e) => this.start_selection(e));
 		this.$table.on("mouseover", "td.day", (e) => this.extend_selection(e));
 
@@ -194,12 +219,68 @@ class AttendanceSheet {
 					"You have no direct reports to fill the timesheet for",
 				)}</div>`,
 			);
+			this.size_table();
 			return;
 		}
 
 		this.$table.html(
 			this.summarized.get_value() ? this.get_summary_html() : this.get_sheet_html(),
 		);
+		this.size_table();
+	}
+
+	// the rows scroll inside the table rather than with the page: a header only stays put
+	// if there is a box for it to stay in, and that box has to end where the screen does
+	size_table() {
+		const table = this.$table[0];
+		const top = table.getBoundingClientRect().top + window.scrollY;
+
+		this.$table.css("max-height", `${Math.max(window.innerHeight - top - 40, 240)}px`);
+
+		this.paint_scrollbar();
+	}
+
+	// the thumb, sized and placed by how much of itself the table is showing
+	paint_scrollbar() {
+		const table = this.$table[0];
+		const strip = this.$scrollbar[0];
+		const shown = table.clientWidth / table.scrollWidth;
+
+		this.$scrollbar.toggle(shown < 1);
+		if (shown >= 1) return;
+
+		const width = Math.max(shown * strip.clientWidth, 40);
+		const scrolled = table.scrollLeft / (table.scrollWidth - table.clientWidth);
+
+		strip.firstElementChild.style.width = `${width}px`;
+		strip.firstElementChild.style.left = `${scrolled * (strip.clientWidth - width)}px`;
+	}
+
+	// dragging the thumb, or a click anywhere on the track to jump there
+	grab_scrollbar(event) {
+		const strip = this.$scrollbar[0];
+		const thumb = strip.firstElementChild;
+		const track = strip.getBoundingClientRect();
+		const grip =
+			event.target === thumb
+				? event.clientX - thumb.getBoundingClientRect().left
+				: thumb.offsetWidth / 2;
+
+		const drag = (moved) => {
+			const table = this.$table[0];
+			const span = strip.clientWidth - thumb.offsetWidth;
+			const offset = Math.min(Math.max(moved.clientX - track.left - grip, 0), span);
+
+			table.scrollLeft = span
+				? (offset / span) * (table.scrollWidth - table.clientWidth)
+				: 0;
+			this.paint_scrollbar();
+		};
+
+		event.preventDefault();
+		drag(event);
+		$(document).on("mousemove.sheet_scrollbar", drag);
+		$(document).one("mouseup", () => $(document).off("mousemove.sheet_scrollbar"));
 	}
 
 	render_actions() {
@@ -838,7 +919,8 @@ function get_totals(row) {
 
 	Object.values(row.days).forEach((cell) => {
 		if (["Present", "Work From Home"].includes(cell.status)) totals.present += 1;
-		else if (cell.status === "On Leave") totals.leave += 1;
+		// a leave nobody pays for is an absence at the employee's own expense
+		else if (cell.status === "On Leave") totals[cell.unpaid_leave ? "absent" : "leave"] += 1;
 		else if (cell.status === "Sick Leave") totals.sick += 1;
 		else if (cell.status === "Absent") totals.absent += 1;
 		else if (cell.status === "Half Day") {
@@ -1095,12 +1177,28 @@ function inject_styles() {
 	style.id = STYLE_ID;
 	style.textContent = `
 		.attendance-sheet-container { padding: 15px 0; }
-		.attendance-sheet-table { overflow-x: auto; background-color: var(--fg-color);
+		/* the table scrolls the rows itself, which is what the sticky header and the
+		   sticky name column stay put in. Sideways it is scrolled from the strip below
+		   it: hidden overflow still scrolls under a script, and it keeps the bar out of
+		   the table, where an overlay one would ride over the last row */
+		.attendance-sheet-table { overflow-y: auto; overflow-x: hidden;
+			background-color: var(--fg-color);
 			border: 1px solid var(--border-color); border-radius: var(--border-radius-md);
 			--sheet-zebra: #F7F8F9; --sheet-cross: rgba(49, 138, 216, 0.08);
 			--sheet-band: rgba(49, 138, 216, 0.14); }
 		[data-theme="dark"] .attendance-sheet-table { --sheet-zebra: #232A31;
 			--sheet-cross: rgba(120, 180, 240, 0.10); --sheet-band: rgba(120, 180, 240, 0.18); }
+		/* the track is drawn even when nothing is being dragged, so that there is
+		   something to aim at; the thumb darkens under the cursor */
+		.attendance-sheet-scrollbar { position: relative; height: 14px; margin-top: 6px;
+			border: 1px solid var(--border-color); border-radius: 7px;
+			background-color: var(--control-bg, var(--fg-color)); }
+		.attendance-sheet-scrollbar .thumb { position: absolute; top: 1px; bottom: 1px;
+			left: 0; min-width: 40px; border-radius: 6px; cursor: grab;
+			background-color: var(--gray-500, #6B7280); opacity: 0.35;
+			transition: opacity 120ms ease; }
+		.attendance-sheet-scrollbar:hover .thumb { opacity: 0.7; }
+		.attendance-sheet-scrollbar .thumb:active { opacity: 0.9; cursor: grabbing; }
 		.attendance-sheet-empty { padding: 30px; text-align: center; }
 		table.attendance-sheet { border-collapse: separate; border-spacing: 0; width: 100%;
 			font-size: var(--text-sm); user-select: none; }

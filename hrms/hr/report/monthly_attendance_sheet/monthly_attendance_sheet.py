@@ -22,6 +22,7 @@ from hrms.hr.attendance_marks import (
 	get_color,
 	get_day_label,
 	get_leave_abbreviations,
+	get_unpaid_leave_types,
 )
 from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import get_approved_periods
 from hrms.utils import date_diff, get_date_range
@@ -611,8 +612,9 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 	"""The totals of the summarized view, read the way the attendance sheet page reads them.
 
 	A half day is half a day of presence plus half of whatever the other half was, and
-	absence counts only what payroll treats as unpaid — a leave of any kind is a leave.
-	The hours are the ones entered on the attendance itself.
+	absence counts what payroll does not pay for: the days marked absent and the leaves
+	taken at the employee's own expense. The hours are the ones entered on the attendance
+	itself.
 	"""
 	approved = get_approved_condition(employee, filters)
 	if approved is None:
@@ -628,6 +630,18 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 	def other_half(status: str):
 		return half_day & (Attendance.half_day_status == status)
 
+	on_leave = Attendance.status == "On Leave"
+	unpaid_types = get_unpaid_leave_types()
+	absent = days(Attendance.status == "Absent") + days(other_half("Absent"), 0.5)
+	paid_leave = on_leave
+
+	if unpaid_types:
+		# a day left without a type is a leave in general, so it stays among the paid ones
+		unpaid = Attendance.leave_type.isin(unpaid_types)
+		paid = Attendance.leave_type.isnull() | Attendance.leave_type.notin(unpaid_types)
+		paid_leave = on_leave & paid
+		absent = absent + days(on_leave & unpaid)
+
 	totals = (
 		frappe.qb.from_(Attendance)
 		.select(
@@ -636,9 +650,9 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 				+ days(half_day, 0.5)
 				+ days(other_half("Present"), 0.5)
 			).as_("total_present"),
-			days(Attendance.status == "On Leave").as_("total_leave"),
+			days(paid_leave).as_("total_leave"),
 			days(Attendance.status == "Sick Leave").as_("total_sick"),
-			(days(Attendance.status == "Absent") + days(other_half("Absent"), 0.5)).as_("total_absent"),
+			absent.as_("total_absent"),
 			Sum(Attendance.overtime_hours).as_("overtime_hours"),
 			Sum(Attendance.shortfall_hours).as_("shortfall_hours"),
 		)
