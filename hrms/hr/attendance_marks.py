@@ -62,6 +62,15 @@ def get_leave_abbreviations() -> dict[str, str]:
 	return {entry.name: entry.attendance_sheet_abbr for entry in types}
 
 
+def get_unpaid_leave_types() -> set[str]:
+	"""The leave types nobody is paid for, the ones taken at the employee's own expense.
+
+	A day of one of them is an absence as far as payroll is concerned, so the summarized
+	view counts it in the absence column rather than among the leaves.
+	"""
+	return set(frappe.get_all("Leave Type", filters={"is_lwp": 1}, pluck="name", ignore_permissions=True))
+
+
 def get_day_label(day) -> str:
 	"""How a day of the period is headed: its number and the weekday after it."""
 	return f"{day.day} {_(DAY_ABBR[day.weekday()], context=DAY_CONTEXT)}"

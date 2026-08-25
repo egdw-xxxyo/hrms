@@ -22,6 +22,7 @@ from hrms.hr.attendance_marks import (
 	get_color,
 	get_day_label,
 	get_leave_abbreviations,
+	get_unpaid_leave_types,
 )
 from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import get_approved_periods
 from hrms.utils import date_diff, get_date_range
@@ -32,6 +33,21 @@ Filters = frappe._dict
 half_day_map = {
 	"Half Day/Other Half Present": "Present",
 	"Half Day/Other Half Absent": "Absent",
+}
+
+# the days nobody was meant to work. A day only carries one of these when it holds no
+# attendance and no leave of its own, so a weekend somebody did work is not among them
+NON_WORKING_STATUSES = ("Weekly Off", "Holiday")
+
+# what a row is grouped under, by the name the filter offers. The manager is grouped by
+# name rather than by the employee a report line points at, because the cell is what the
+# reader sees and a link to an employee prints its id
+group_by_options = {
+	"Branch": {"fieldname": "branch", "fieldtype": "Link", "options": "Branch"},
+	"Grade": {"fieldname": "grade", "fieldtype": "Link", "options": "Employee Grade"},
+	"Department": {"fieldname": "department", "fieldtype": "Link", "options": "Department"},
+	"Designation": {"fieldname": "designation", "fieldtype": "Link", "options": "Designation"},
+	"Manager": {"fieldname": "manager_name", "fieldtype": "Data"},
 }
 
 
@@ -61,6 +77,16 @@ def execute(filters: Filters | None = None) -> tuple:
 			filters.companies.extend(get_descendants_of("Company", filters.company))
 
 	filters.approved_periods = get_approved_periods_in_period(filters)
+
+	if filters.unsubmitted_view:
+		data = get_unsubmitted_data(filters)
+		if not data:
+			frappe.msgprint(
+				_("Every employee of this period sits in a submitted sheet."),
+				alert=True,
+				indicator="green",
+			)
+		return get_columns_for_unsubmitted(filters), data, None, None
 
 	attendance_map = get_attendance_map(filters)
 	if not attendance_map:
@@ -142,25 +168,7 @@ def get_mark_color(status: str) -> str:
 
 
 def get_columns(filters: Filters) -> list[dict]:
-	columns = []
-
-	if filters.group_by:
-		options_mapping = {
-			"Branch": "Branch",
-			"Grade": "Employee Grade",
-			"Department": "Department",
-			"Designation": "Designation",
-		}
-		options = options_mapping.get(filters.group_by)
-		columns.append(
-			{
-				"label": _(filters.group_by),
-				"fieldname": frappe.scrub(filters.group_by),
-				"fieldtype": "Link",
-				"options": options,
-				"width": 120,
-			}
-		)
+	columns = get_group_by_column(filters)
 
 	columns.extend(
 		[
@@ -182,6 +190,20 @@ def get_columns(filters: Filters) -> list[dict]:
 		columns.extend(get_columns_for_days(filters))
 
 	return columns
+
+
+def get_group_by_column(filters: Filters) -> list[dict]:
+	"""The column the rows are grouped under, an empty list when nothing is grouped."""
+	option = group_by_options.get(filters.group_by)
+
+	return [{"label": _(filters.group_by), **option, "width": 120}] if option else []
+
+
+def get_group_by_field(filters: Filters) -> str | None:
+	"""The key a row carries the value it is grouped under in, None when nothing is grouped."""
+	option = group_by_options.get(filters.group_by)
+
+	return option["fieldname"] if option else None
 
 
 def get_columns_for_totals() -> list[dict]:
@@ -209,6 +231,107 @@ def get_columns_for_totals() -> list[dict]:
 		}
 		for fieldname, label in labels.items()
 	]
+
+
+def get_columns_for_unsubmitted(filters: Filters) -> list[dict]:
+	"""The unsubmitted view: whom to chase, and whom to chase about it.
+
+	Grouped by the same filter the sheet itself is grouped by, since a list of who still
+	owes a sheet is read department by department. What the rows are grouped under is not
+	repeated as a column of its own: it stands in the heading, the way the sheet does it.
+	"""
+	group_column = get_group_by_column(filters)
+	grouped = {column["fieldname"] for column in group_column}
+	columns = [
+		{
+			"label": _("Employee"),
+			"fieldname": "employee",
+			"fieldtype": "Link",
+			"options": "Employee",
+			"width": 135,
+		},
+		{"label": _("Employee Name"), "fieldname": "employee_name", "fieldtype": "Data", "width": 180},
+		{
+			"label": _("Department"),
+			"fieldname": "department",
+			"fieldtype": "Link",
+			"options": "Department",
+			"width": 180,
+		},
+		{
+			"label": _("Designation"),
+			"fieldname": "designation",
+			"fieldtype": "Link",
+			"options": "Designation",
+			"width": 180,
+		},
+		{"label": _("Manager Name"), "fieldname": "manager_name", "fieldtype": "Data", "width": 180},
+	]
+
+	return group_column + [column for column in columns if column["fieldname"] not in grouped]
+
+
+def get_unsubmitted_data(filters: Filters) -> list[dict]:
+	"""The unsubmitted rows, under a heading each when the report is grouped.
+
+	Nobody is dropped for having no value to group under: the point of the list is that
+	everybody still owed shows up on it, so those rows land under an empty heading, last.
+	"""
+	rows = get_unsubmitted_rows(filters)
+	group_by_column = get_group_by_field(filters)
+
+	if not group_by_column:
+		return rows
+
+	group_key = lambda row: row.get(group_by_column) or ""  # noqa
+	data = []
+
+	ordered = sorted(rows, key=lambda row: (not group_key(row), group_key(row)))
+
+	for value, group in groupby(ordered, key=group_key):
+		data.append({group_by_column: value})
+		data.extend({key: cell for key, cell in row.items() if key != group_by_column} for row in group)
+
+	return data
+
+
+def get_unsubmitted_rows(filters: Filters) -> list[dict]:
+	"""The employees no submitted sheet covers anywhere in the period.
+
+	The counterpart of the report itself: what the sheet leaves out because nobody has
+	handed it over yet. Whoever the employee reports to is the one who still owes it, so
+	the manager rides along with the row. Employees hired after the period ended are left
+	out — there was no sheet of theirs to submit.
+	"""
+	dates_in_period = get_dates_in_period(filters)
+	Employee = frappe.qb.DocType("Employee")
+	Manager = frappe.qb.DocType("Employee").as_("manager")
+
+	query = (
+		frappe.qb.from_(Employee)
+		.left_join(Manager)
+		.on(Manager.name == Employee.reports_to)
+		.select(
+			(Employee.name).as_("employee"),
+			Employee.employee_name,
+			Employee.department,
+			Employee.designation,
+			Employee.branch,
+			Employee.grade,
+			(Manager.employee_name).as_("manager_name"),
+		)
+		.where(
+			(Employee.company.isin(filters.companies))
+			& (Employee.status == "Active")
+			& (Employee.date_of_joining <= getdate(dates_in_period[-1]))
+		)
+		.orderby(Employee.employee_name)
+	)
+
+	if filters.employee:
+		query = query.where(Employee.name == filters.employee)
+
+	return [row for row in query.run(as_dict=True) if row.employee not in filters.approved_periods]
 
 
 def get_columns_for_days(filters: Filters) -> list[dict]:
@@ -260,9 +383,9 @@ def get_data(filters: Filters, attendance_map: dict) -> list[dict]:
 	notes = {} if filters.summarized_view else get_day_notes(filters)
 	data = []
 
-	if filters.group_by:
-		group_by_column = frappe.scrub(filters.group_by)
+	group_by_column = get_group_by_field(filters)
 
+	if group_by_column:
 		for value in group_by_param_values:
 			if not value:
 				continue
@@ -427,14 +550,18 @@ def get_employee_related_details(filters: Filters) -> tuple[dict, list]:
 	2. list of values for the group by filter
 	"""
 	Employee = frappe.qb.DocType("Employee")
+	Manager = frappe.qb.DocType("Employee").as_("manager")
 
 	joining_date_condition = get_date_condition(Employee.date_of_joining, filters)
 
 	query = (
 		frappe.qb.from_(Employee)
+		.left_join(Manager)
+		.on(Manager.name == Employee.reports_to)
 		.select(
 			Employee.name,
 			Employee.employee_name,
+			(Manager.employee_name).as_("manager_name"),
 			Employee.designation,
 			Employee.grade,
 			Employee.department,
@@ -456,10 +583,12 @@ def get_employee_related_details(filters: Filters) -> tuple[dict, list]:
 	if filters.employee:
 		query = query.where(Employee.name == filters.employee)
 
-	group_by = filters.group_by
+	group_by = get_group_by_field(filters)
 	if group_by:
-		group_by = group_by.lower()
-		query = query.orderby(group_by)
+		# the manager's name is a column of the joined side, and a bare name in the order
+		# by is read as a column of the employee — or, worse, as either of the two
+		column = Manager.employee_name if group_by == "manager_name" else Employee[group_by]
+		query = query.orderby(column)
 
 	employee_details = query.run(as_dict=True)
 
@@ -587,6 +716,7 @@ def get_attendance_status_for_detailed_view(
 			row["marks"][fieldname] = {
 				"color": get_mark_color(status),
 				"note": notes.get((employee, d)),
+				"off": status in NON_WORKING_STATUSES,
 			}
 
 		attendance_values.append(row)
@@ -611,8 +741,9 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 	"""The totals of the summarized view, read the way the attendance sheet page reads them.
 
 	A half day is half a day of presence plus half of whatever the other half was, and
-	absence counts only what payroll treats as unpaid — a leave of any kind is a leave.
-	The hours are the ones entered on the attendance itself.
+	absence counts what payroll does not pay for: the days marked absent and the leaves
+	taken at the employee's own expense. The hours are the ones entered on the attendance
+	itself.
 	"""
 	approved = get_approved_condition(employee, filters)
 	if approved is None:
@@ -628,6 +759,18 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 	def other_half(status: str):
 		return half_day & (Attendance.half_day_status == status)
 
+	on_leave = Attendance.status == "On Leave"
+	unpaid_types = get_unpaid_leave_types()
+	absent = days(Attendance.status == "Absent") + days(other_half("Absent"), 0.5)
+	paid_leave = on_leave
+
+	if unpaid_types:
+		# a day left without a type is a leave in general, so it stays among the paid ones
+		unpaid = Attendance.leave_type.isin(unpaid_types)
+		paid = Attendance.leave_type.isnull() | Attendance.leave_type.notin(unpaid_types)
+		paid_leave = on_leave & paid
+		absent = absent + days(on_leave & unpaid)
+
 	totals = (
 		frappe.qb.from_(Attendance)
 		.select(
@@ -636,9 +779,9 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 				+ days(half_day, 0.5)
 				+ days(other_half("Present"), 0.5)
 			).as_("total_present"),
-			days(Attendance.status == "On Leave").as_("total_leave"),
+			days(paid_leave).as_("total_leave"),
 			days(Attendance.status == "Sick Leave").as_("total_sick"),
-			(days(Attendance.status == "Absent") + days(other_half("Absent"), 0.5)).as_("total_absent"),
+			absent.as_("total_absent"),
 			Sum(Attendance.overtime_hours).as_("overtime_hours"),
 			Sum(Attendance.shortfall_hours).as_("shortfall_hours"),
 		)
