@@ -334,7 +334,7 @@ class AttendanceSheet {
 			.map(
 				(row) => `
 					<tr data-employee="${row.employee}">
-						${get_employee_html(row)}
+						${get_employee_html(row, this.sheet.dates)}
 						${this.sheet.dates.map((date) => get_cell_html(row, date)).join("")}
 					</tr>`,
 			)
@@ -365,7 +365,7 @@ class AttendanceSheet {
 				const totals = get_totals(row);
 				return `
 					<tr>
-						${get_employee_html(row)}
+						${get_employee_html(row, this.sheet.dates)}
 						<td class="number">${totals.present}</td>
 						<td class="number">${totals.leave}</td>
 						<td class="number">${totals.sick}</td>
@@ -835,20 +835,31 @@ class AttendanceSheet {
 
 // -------------------------------------------------------------------- cells
 
-function get_employee_html(row) {
+function get_employee_html(row, dates) {
 	const name = frappe.utils.escape_html(row.employee_name || row.employee);
-	// Звільненого видно разом із датою: інакше порожні клітинки кінця місяця виглядають
-	// як незаповнений табель, а не як дні, коли людина вже тут не працювала.
-	const until = row.relieving_date
-		? `<span class="employee-until" title="${__("Dismissed")}">${__("until {0}", [
-				frappe.format(row.relieving_date, { fieldtype: "Date" }),
-		  ])}</span>`
-		: "";
+	const first = dates && dates[0];
+	const last = dates && dates[dates.length - 1];
+	const date = (value) => frappe.format(value, { fieldtype: "Date" });
+	const badges = [];
+
+	// Межі роботи підписуються лише тоді, коли вони справді в цьому періоді: інакше в кожного
+	// рядка висіла б дата прийняття, яка нічого не пояснює.
+	if (row.date_of_joining && (!first || row.date_of_joining > first)) {
+		badges.push([__("Hired"), __("from {0}", [date(row.date_of_joining)])]);
+	}
+
+	if (row.relieving_date && (!last || row.relieving_date <= last)) {
+		badges.push([__("Dismissed"), __("until {0}", [date(row.relieving_date)])]);
+	}
+
+	const marks = badges
+		.map(([title, text]) => `<span class="employee-period" title="${title}">${text}</span>`)
+		.join("");
 
 	return `
 		<td class="employee">
 			<a href="/app/employee/${encodeURIComponent(row.employee)}" title="${row.employee}"
-				>${name}</a>${until}
+				>${name}</a>${marks}
 		</td>`;
 }
 
@@ -1289,7 +1300,7 @@ function inject_styles() {
 			);
 			opacity: 0.7;
 		}
-		td.employee .employee-until {
+		td.employee .employee-period {
 			margin-left: 6px; font-size: 11px; color: var(--text-muted);
 			white-space: nowrap;
 		}
