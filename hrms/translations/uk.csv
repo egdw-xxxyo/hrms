@@ -936,3 +936,5 @@ Unsubmitted Sheets,Неподані табелі
 Every employee of this period sits in a submitted sheet.,За цей період табелі подано на всіх працівників.
 Manager Name,Керівник
 Manager,Керівник
+"until {0}","по {0}"
+"Dismissed","Звільнено"

@@ -837,11 +837,18 @@ class AttendanceSheet {
 
 function get_employee_html(row) {
 	const name = frappe.utils.escape_html(row.employee_name || row.employee);
+	// Звільненого видно разом із датою: інакше порожні клітинки кінця місяця виглядають
+	// як незаповнений табель, а не як дні, коли людина вже тут не працювала.
+	const until = row.relieving_date
+		? `<span class="employee-until" title="${__("Dismissed")}">${__("until {0}", [
+				frappe.format(row.relieving_date, { fieldtype: "Date" }),
+		  ])}</span>`
+		: "";
 
 	return `
 		<td class="employee">
 			<a href="/app/employee/${encodeURIComponent(row.employee)}" title="${row.employee}"
-				>${name}</a>
+				>${name}</a>${until}
 		</td>`;
 }
 
@@ -849,7 +856,9 @@ function get_cell_html(row, date) {
 	const cell = row.days[date];
 	const meta = STATUS_META[cell.status] || {};
 	const off = NON_WORKING_STATUSES.includes(cell.status) ? "off" : "";
-	const classes = ["day", cell.locked ? "locked" : "", off].filter(Boolean).join(" ");
+	const classes = ["day", cell.locked ? "locked" : "", cell.outside ? "outside" : "", off]
+		.filter(Boolean)
+		.join(" ");
 	// the cells of one leave (or of one attendance) light up together on hover
 	const group = cell.leave_application
 		? `Leave Application:${cell.leave_application}`
@@ -1271,6 +1280,19 @@ function inject_styles() {
 		table.attendance-sheet td.day.related { background-color: var(--fg-hover-color);
 			box-shadow: inset 0 -2px 0 0 var(--gray-400, #9CA3AF); }
 		table.attendance-sheet td.day.locked { cursor: default; opacity: 0.6; }
+		/* поза періодом роботи: не вихідний і не пропуск — просто не день цієї людини */
+		table.attendance-sheet td.day.outside {
+			cursor: not-allowed;
+			background-image: repeating-linear-gradient(
+				45deg, transparent, transparent 4px,
+				var(--gray-200, #e2e6e9) 4px, var(--gray-200, #e2e6e9) 5px
+			);
+			opacity: 0.7;
+		}
+		td.employee .employee-until {
+			margin-left: 6px; font-size: 11px; color: var(--text-muted);
+			white-space: nowrap;
+		}
 		table.attendance-sheet td.number, table.attendance-sheet th.number {
 			text-align: right; padding-right: 12px; min-width: 90px; }
 		.attendance-sheet .status { display: block; }

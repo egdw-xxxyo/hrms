@@ -111,14 +111,23 @@ def extra_employee_query(
 
 
 def fetch_employees(filters: dict, company: str | None = None) -> dict[str, dict]:
-	scope = {"status": "Active", **filters}
+	# A dismissed employee still owns the days he worked, so he stays fetchable; the sheet
+	# drops him once the period no longer touches his employment (see `build_sheet`).
+	scope = {"status": ("in", ["Active", "Left"]), **filters}
 	if company:
 		scope["company"] = company
 
 	employees = frappe.get_all(
 		"Employee",
 		filters=scope,
-		fields=["name", "employee_name", "company", "holiday_list", "date_of_joining"],
+		fields=[
+			"name",
+			"employee_name",
+			"company",
+			"holiday_list",
+			"date_of_joining",
+			"relieving_date",
+		],
 		order_by="employee_name",
 		ignore_permissions=True,
 	)
@@ -174,6 +183,11 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 	"""
 	employees = get_editable_employees(company)
 	dates = [getdate(d) for d in get_date_range(from_date, to_date)]
+	employees = {
+		employee: details
+		for employee, details in employees.items()
+		if employed_within(details, from_date, to_date)
+	}
 
 	if not employees:
 		return {"employees": [], "dates": [cstr(d) for d in dates], "can_approve": False, "approval": None}
@@ -199,9 +213,12 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 					locks,
 					leave_abbrs,
 					unpaid_types,
+					details,
 				)
 				for d in dates
 			},
+			"date_of_joining": cstr(details.date_of_joining or ""),
+			"relieving_date": cstr(details.relieving_date or ""),
 		}
 		for employee, details in employees.items()
 	]
@@ -216,6 +233,22 @@ def build_sheet(company: str, from_date, to_date) -> dict:
 	}
 
 
+def employed_within(details, from_date, to_date) -> bool:
+	"""Did this employee work at any point of the period?"""
+	if details.date_of_joining and getdate(details.date_of_joining) > getdate(to_date):
+		return False
+
+	return not (details.relieving_date and getdate(details.relieving_date) < getdate(from_date))
+
+
+def employed_on(details, day) -> bool:
+	"""A day outside the employment is nobody's day: it cannot be worked and cannot be marked."""
+	if details.date_of_joining and day < getdate(details.date_of_joining):
+		return False
+
+	return not (details.relieving_date and day > getdate(details.relieving_date))
+
+
 def get_cell(
 	employee: str,
 	day,
@@ -225,7 +258,25 @@ def get_cell(
 	locks: dict,
 	leave_abbrs: dict,
 	unpaid_types: set,
+	details=None,
 ) -> dict:
+	if details is not None and not employed_on(details, day):
+		# Before the joining and after the dismissal the cell is not a day off — it is not
+		# a day of this employee at all, so it stays empty and closed for marking.
+		return {
+			"status": "",
+			"half_day_status": "",
+			"attendance": None,
+			"leave_application": None,
+			"leave_abbr": "",
+			"unpaid_leave": False,
+			"overtime_hours": 0.0,
+			"shortfall_hours": 0.0,
+			"shift": "",
+			"locked": True,
+			"outside": True,
+		}
+
 	entry = attendance.get(employee, {}).get(day)
 	leave = leaves.get(employee, {}).get(day)
 
@@ -248,6 +299,7 @@ def get_cell(
 		"shortfall_hours": flt(entry.shortfall_hours) if entry else 0.0,
 		"shift": (entry.shift if entry else None) or "",
 		"locked": day in locks.get(employee, set()),
+		"outside": False,
 	}
 
 
