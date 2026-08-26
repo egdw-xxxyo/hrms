@@ -16,13 +16,12 @@ const STATUS_META = {
 	"Work From Home": { abbr: "WFH", color: "green" },
 	Absent: { abbr: "A", color: "red" },
 	"Sick Leave": { abbr: "SL", color: "#8B5CF6" },
-	"Half Day": { abbr: "HD", color: "orange" },
 	"On Leave": { abbr: "L", color: "#3187D8" },
 	Holiday: { abbr: "H", color: "#878787" },
 	"Weekly Off": { abbr: "WO", color: "#878787" },
 };
 
-const ATTENDANCE_STATUSES = ["Present", "Work From Home", "Half Day", "Absent", "Sick Leave"];
+const ATTENDANCE_STATUSES = ["Present", "Work From Home", "Absent", "Sick Leave"];
 
 // the days nobody was meant to work: a cell carries one of these only when it holds no
 // attendance and no leave of its own, so a weekend somebody did work is not among them
@@ -737,7 +736,6 @@ class AttendanceSheet {
 						from_date,
 						to_date,
 						status: values.status,
-						half_day_status: values.half_day_status,
 						overtime_hours: values.overtime_hours,
 						shortfall_hours: values.shortfall_hours,
 						shift: values.shift,
@@ -757,7 +755,6 @@ class AttendanceSheet {
 				  )}`
 				: frappe.datetime.str_to_user(from_date),
 			status: (cell && cell.status) || "Present",
-			half_day_status: (cell && cell.half_day_status) || "Absent",
 			overtime_hours: (cell && cell.overtime_hours) || 0,
 			shortfall_hours: (cell && cell.shortfall_hours) || 0,
 			shift: (cell && cell.shift) || "",
@@ -802,8 +799,6 @@ class AttendanceSheet {
 						leave_type: values.leave_type,
 						from_date: values.from_date,
 						to_date: values.to_date,
-						half_day: values.half_day,
-						half_day_date: values.half_day_date,
 						description: values.description,
 					});
 					dialog.hide();
@@ -823,8 +818,6 @@ class AttendanceSheet {
 			leave_type: doc ? doc.leave_type : "",
 			from_date: start,
 			to_date: doc ? doc.to_date : to_date,
-			half_day: doc ? doc.half_day : 0,
-			half_day_date: doc ? doc.half_day_date : "",
 			description: doc ? doc.description : "",
 		});
 
@@ -867,12 +860,7 @@ function get_cell_html(row, date) {
 }
 
 function get_cell_abbr(cell) {
-	if (!cell.status) return "&nbsp;";
-	if (cell.status !== "Half Day") return get_abbr(cell.status);
-
-	return `${get_abbr("Half Day")}/${get_abbr(
-		cell.half_day_status === "Present" ? "Present" : "Absent",
-	)}`;
+	return cell.status ? get_abbr(cell.status) : "&nbsp;";
 }
 
 function get_abbr(status) {
@@ -928,11 +916,6 @@ function get_totals(row) {
 		else if (cell.status === "On Leave") totals[cell.unpaid_leave ? "absent" : "leave"] += 1;
 		else if (cell.status === "Sick Leave") totals.sick += 1;
 		else if (cell.status === "Absent") totals.absent += 1;
-		else if (cell.status === "Half Day") {
-			totals.present += 0.5;
-			if (cell.half_day_status === "Present") totals.present += 0.5;
-			else totals.absent += 0.5;
-		}
 
 		totals.overtime += flt(cell.overtime_hours);
 		totals.shortfall += flt(cell.shortfall_hours);
@@ -973,13 +956,6 @@ function get_attendance_fields(is_range) {
 			label: __("Status"),
 			options: ATTENDANCE_STATUSES,
 			reqd: 1,
-		},
-		{
-			fieldtype: "Select",
-			fieldname: "half_day_status",
-			label: __("Status for Other Half"),
-			options: ["Present", "Absent"],
-			depends_on: "eval:doc.status == 'Half Day'",
 		},
 		{ fieldtype: "Column Break" },
 		{ fieldtype: "Link", fieldname: "shift", label: __("Shift"), options: "Shift Type" },
@@ -1029,20 +1005,6 @@ function get_leave_fields(allowed_types, refresh_summary) {
 			reqd: 1,
 			onchange: refresh_summary,
 		},
-		{ fieldtype: "Column Break" },
-		{
-			fieldtype: "Check",
-			fieldname: "half_day",
-			label: __("Half Day"),
-			onchange: refresh_summary,
-		},
-		{
-			fieldtype: "Date",
-			fieldname: "half_day_date",
-			label: __("Half Day Date"),
-			depends_on: "half_day",
-			onchange: refresh_summary,
-		},
 		{ fieldtype: "Section Break" },
 		{ fieldtype: "HTML", fieldname: "summary" },
 		{ fieldtype: "Small Text", fieldname: "description", label: __("Reason") },
@@ -1051,11 +1013,6 @@ function get_leave_fields(allowed_types, refresh_summary) {
 
 async function update_leave_summary(dialog, employee, allocations) {
 	const values = dialog.get_values(true);
-
-	if (values.half_day && !values.half_day_date) {
-		dialog.set_value("half_day_date", values.from_date);
-		return;
-	}
 
 	const allocation = allocations[values.leave_type];
 	const days =
@@ -1067,8 +1024,6 @@ async function update_leave_summary(dialog, employee, allocations) {
 						leave_type: values.leave_type,
 						from_date: values.from_date,
 						to_date: values.to_date,
-						half_day: values.half_day,
-						half_day_date: values.half_day_date,
 					},
 			  )
 			: null;

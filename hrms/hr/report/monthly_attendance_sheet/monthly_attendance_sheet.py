@@ -29,12 +29,6 @@ from hrms.utils import date_diff, get_date_range
 
 Filters = frappe._dict
 
-# the report splits a half day by what the other half was; the statuses are its own
-half_day_map = {
-	"Half Day/Other Half Present": "Present",
-	"Half Day/Other Half Absent": "Absent",
-}
-
 # the days nobody was meant to work. A day only carries one of these when it holds no
 # attendance and no leave of its own, so a weekend somebody did work is not among them
 NON_WORKING_STATUSES = ("Weekly Off", "Holiday")
@@ -130,41 +124,26 @@ def is_approved(filters: Filters, employee: str, day: date) -> bool:
 
 
 def get_mark(status: str) -> str:
-	"""The mark a status leaves on a day of the report.
-
-	A half day carries the letters of both halves, its own over the other one's, so the
-	split the report makes stays readable without a status of its own in the legend.
-	"""
-	other_half = half_day_map.get(status)
-
-	return f"{get_abbr('Half Day')}/{get_abbr(other_half)}" if other_half else get_abbr(status)
+	"""The mark a status leaves on a day of the report."""
+	return get_abbr(status)
 
 
 def get_message() -> str:
-	"""The legend under the table: every mark a day can carry, in reading order.
-
-	The half day sits in the legend as the two marks that actually reach a cell, since the
-	report never leaves it whole.
-	"""
-	statuses = [
-		entry for status in STATUS_META for entry in (half_day_map if status == "Half Day" else [status])
-	]
-
+	"""The legend under the table: every mark a day can carry, in reading order."""
 	entries = [
 		f"""
 			<span style='border-left: 2px solid {get_mark_color(status)}; padding-right: 12px; padding-left: 5px; margin-right: 3px;'>
 				{_(status)} - {get_mark(status)}
 			</span>
 		"""
-		for status in statuses
+		for status in STATUS_META
 	]
 
 	return "".join(entries)
 
 
 def get_mark_color(status: str) -> str:
-	"""A half day is coloured by the half day, whichever way the other half went."""
-	return get_color("Half Day" if status in half_day_map else status)
+	return get_color(status)
 
 
 def get_columns(filters: Filters) -> list[dict]:
@@ -505,24 +484,12 @@ def get_note(entry: dict, leave_abbrs: dict) -> dict | None:
 def get_attendance_records(filters: Filters) -> list[dict]:
 	Attendance = frappe.qb.DocType("Attendance")
 	attendance_date_condition = get_date_condition(Attendance.attendance_date, filters)
-	status = (
-		frappe.qb.terms.Case()
-		.when(
-			((Attendance.status == "Half Day") & (Attendance.half_day_status == "Present")),
-			"Half Day/Other Half Present",
-		)
-		.when(
-			((Attendance.status == "Half Day") & (Attendance.half_day_status == "Absent")),
-			"Half Day/Other Half Absent",
-		)
-		.else_(Attendance.status)
-	)
 	query = (
 		frappe.qb.from_(Attendance)
 		.select(
 			Attendance.employee,
 			Attendance.attendance_date,
-			(status).as_("status"),
+			Attendance.status,
 			Attendance.shift,
 		)
 		.where(
@@ -740,8 +707,7 @@ def get_holiday_status(holiday_date: date, holidays: list) -> str:
 def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 	"""The totals of the summarized view, read the way the attendance sheet page reads them.
 
-	A half day is half a day of presence plus half of whatever the other half was, and
-	absence counts what payroll does not pay for: the days marked absent and the leaves
+	Absence counts what payroll does not pay for: the days marked absent and the leaves
 	taken at the employee's own expense. The hours are the ones entered on the attendance
 	itself.
 	"""
@@ -750,18 +716,14 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 		return dict.fromkeys(get_total_fields(), 0.0)
 
 	Attendance = frappe.qb.DocType("Attendance")
-	half_day = Attendance.status == "Half Day"
 
 	def days(condition, weight: float = 1) -> Sum:
 		"""The days matching a condition, each one worth `weight` of a day."""
 		return Sum(frappe.qb.terms.Case().when(condition, weight).else_(0))
 
-	def other_half(status: str):
-		return half_day & (Attendance.half_day_status == status)
-
 	on_leave = Attendance.status == "On Leave"
 	unpaid_types = get_unpaid_leave_types()
-	absent = days(Attendance.status == "Absent") + days(other_half("Absent"), 0.5)
+	absent = days(Attendance.status == "Absent")
 	paid_leave = on_leave
 
 	if unpaid_types:
@@ -774,11 +736,7 @@ def get_totals(employee: str, filters: Filters) -> dict[str, float]:
 	totals = (
 		frappe.qb.from_(Attendance)
 		.select(
-			(
-				days(Attendance.status.isin(["Present", "Work From Home"]))
-				+ days(half_day, 0.5)
-				+ days(other_half("Present"), 0.5)
-			).as_("total_present"),
+			days(Attendance.status.isin(["Present", "Work From Home"])).as_("total_present"),
 			days(paid_leave).as_("total_leave"),
 			days(Attendance.status == "Sick Leave").as_("total_sick"),
 			absent.as_("total_absent"),
@@ -857,9 +815,6 @@ def get_chart_data(attendance_map: dict, filters: Filters) -> dict:
 					total_absent_on_day += 1
 				elif attendance_on_day in ["Present", "Work From Home"]:
 					total_present_on_day += 1
-				elif attendance_on_day == "Half Day":
-					total_present_on_day += 0.5
-					total_leaves_on_day += 0.5
 
 		absent.append(total_absent_on_day)
 		present.append(total_present_on_day)

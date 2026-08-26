@@ -133,7 +133,7 @@ def get_timeline_data(doctype, name):
 			select unix_timestamp(attendance_date), count(*)
 			from `tabAttendance` where employee=%s
 			and attendance_date > date_sub(curdate(), interval 1 year)
-			and status in ('Present', 'Half Day')
+			and status = 'Present'
 			group by attendance_date""",
 			name,
 		)

@@ -39,3 +39,4 @@ hrms.patches.v15_0.remove_ess_user_type_limit
 hrms.patches.v15_0.update_approver_custom_fields
 hrms.patches.v15_0.add_attendance_sheet_extra_employees_field
 hrms.patches.v15_0.add_leave_type_attendance_sheet_abbr
+hrms.patches.v15_0.drop_half_day_attendance
