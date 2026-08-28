@@ -22,7 +22,7 @@ from hrms.utils import get_date_range
 
 MAX_PERIOD_DAYS = 90
 
-ATTENDANCE_STATUSES = ("Present", "Work From Home", "Half Day", "Absent", "Sick Leave")
+ATTENDANCE_STATUSES = ("Present", "Work From Home", "Absent", "Sick Leave")
 
 
 def get_session_employee() -> str | None:
@@ -290,7 +290,6 @@ def get_cell(
 
 	return {
 		"status": status or "",
-		"half_day_status": (entry.half_day_status if entry else None) or "",
 		"attendance": entry.name if entry else None,
 		"leave_application": (entry.leave_application if entry else None) or (leave.name if leave else None),
 		"leave_abbr": (leave_abbrs.get(leave.leave_type) if leave else None) or "",
@@ -322,7 +321,6 @@ def get_attendance_map(employees: list[str], from_date, to_date) -> dict:
 			"employee",
 			"attendance_date",
 			"status",
-			"half_day_status",
 			"leave_type",
 			"overtime_hours",
 			"shortfall_hours",
@@ -355,7 +353,7 @@ def get_leave_map(employees: list[str], from_date, to_date) -> dict:
 			"from_date": ("<=", to_date),
 			"to_date": (">=", from_date),
 		},
-		fields=["name", "employee", "leave_type", "from_date", "to_date", "half_day", "half_day_date"],
+		fields=["name", "employee", "leave_type", "from_date", "to_date"],
 		ignore_permissions=True,
 	)
 
@@ -458,7 +456,6 @@ def save_attendance(
 	from_date: str,
 	to_date: str,
 	status: str,
-	half_day_status: str | None = None,
 	overtime_hours: float = 0,
 	shortfall_hours: float = 0,
 	shift: str | None = None,
@@ -486,7 +483,6 @@ def save_attendance(
 				day,
 				{
 					"status": status,
-					"half_day_status": half_day_status if status == "Half Day" else None,
 					"overtime_hours": flt(overtime_hours),
 					"shortfall_hours": flt(shortfall_hours),
 					"shift": shift,
@@ -604,8 +600,6 @@ def get_leave(name: str) -> dict:
 			"leave_type",
 			"from_date",
 			"to_date",
-			"half_day",
-			"half_day_date",
 			"description",
 		],
 		as_dict=True,
@@ -631,8 +625,6 @@ def save_leave(
 	leave_type: str,
 	from_date: str,
 	to_date: str,
-	half_day: int = 0,
-	half_day_date: str | None = None,
 	description: str | None = None,
 	name: str | None = None,
 ) -> dict:
@@ -659,8 +651,6 @@ def save_leave(
 			"leave_type": leave_type,
 			"from_date": from_date,
 			"to_date": to_date,
-			"half_day": int(half_day or 0),
-			"half_day_date": half_day_date if int(half_day or 0) else None,
 			"description": description,
 			"status": "Approved",
 		}
@@ -840,10 +830,6 @@ def get_totals(cells) -> dict:
 			totals["total_sick"] += 1
 		elif status == "Absent":
 			totals["total_absent"] += 1
-		elif status == "Half Day":
-			totals["total_present"] += 0.5
-			other_half = "total_present" if cell["half_day_status"] == "Present" else "total_absent"
-			totals[other_half] += 0.5
 
 		totals["overtime_hours"] += flt(cell["overtime_hours"])
 		totals["shortfall_hours"] += flt(cell["shortfall_hours"])

@@ -15,7 +15,6 @@ frappe.views.calendar["Attendance"] = {
 			if (data.status === "Absent" || data.status === "On Leave") {
 				return "danger";
 			}
-			if (data.status === "Half Day") return "warning";
 			return "success";
 		}
 	},
