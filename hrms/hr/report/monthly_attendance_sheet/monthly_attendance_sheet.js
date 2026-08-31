@@ -134,7 +134,9 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 			},
 		},
 	],
-	onload: function () {
+	onload: function (report) {
+		add_export_button(report);
+
 		return frappe.call({
 			method: "hrms.hr.report.monthly_attendance_sheet.monthly_attendance_sheet.get_attendance_years",
 			callback: function (r) {
@@ -172,7 +174,7 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 	get_datatable_options: (options) =>
 		frappe.query_report.get_filter_value("unsubmitted_view")
 			? options
-			: { ...options, cellHeight: 50 },
+			: { ...options, cellHeight: 50, columns: stick_the_name(options.columns) },
 	after_datatable_render: () => {
 		// the wrapper keeps the space of the chart it last drew, so it is hidden by hand
 		if (!frappe.query_report.get_filter_value("show_chart")) frappe.query_report.$chart.hide();
@@ -187,6 +189,26 @@ frappe.query_reports["Monthly Attendance Sheet"] = {
 		follow_cursor();
 	},
 };
+
+// the name is what a day is read back to, and a month is wider than any window: the table
+// keeps that one column in place while the days scroll under it. The datatable does the
+// holding itself — the column only has to say so, and it says it here rather than in the
+// report's python, where a stray key would travel into every other reader of the columns
+function stick_the_name(columns) {
+	return (columns || []).map((column) =>
+		column.fieldname === "employee_name" ? { ...column, sticky: true } : column,
+	);
+}
+
+// the file is built and named by the server, so it is asked for with a form post rather
+// than a call: what comes back is the workbook itself, not a payload to unpack
+function add_export_button(report) {
+	report.page.add_inner_button(__("Export to Excel"), () => {
+		open_url_post("/api/method/hrms.hr.attendance_export.download_report", {
+			filters: JSON.stringify(frappe.query_report.get_filter_values()),
+		});
+	});
+}
 
 // what style_days, move_scrollbar and stripe_rows hung on the report, taken back off so
 // a table that is not the sheet is drawn the way every other report is
@@ -231,6 +253,10 @@ function style_days() {
 		.${table_class} .hours.over { color: var(--green-500, green); }
 		.${table_class} .hours.under { color: var(--red-500, red); }
 		.${table_class} .dt-row-filter .dt-cell { height: 33px; }
+		/* the name column the table holds in place has to stay opaque, or the days
+		   scroll through it; the stripes and the cursor are written per row and
+		   outweigh this, which is only the ground under an unstriped one */
+		.${table_class} .dt-cell--sticky { background-color: var(--dt-cell-bg, var(--card-bg)); }
 		/* sideways the rows move only under a script, from the strip below the table.
 		   The table writes its own overflow onto the element, hence the shout */
 		.${table_class} .dt-scrollable { overflow-x: hidden !important; }
