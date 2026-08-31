@@ -100,7 +100,8 @@ class AttendanceSheet {
 			change: () => this.render(),
 		});
 
-		this.page.add_menu_item(__("Export to Excel"), () => this.export_sheet());
+		// a button of its own rather than a menu: the menu would hold this one item
+		this.page.add_inner_button(__("Export to Excel"), () => this.export_sheet());
 
 		// set_input rather than set_value: the default must not fire a refresh of its
 		// own before the page has asked for its data once
