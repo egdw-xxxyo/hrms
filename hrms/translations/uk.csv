@@ -940,3 +940,8 @@ Manager,Керівник
 "Dismissed","Звільнено"
 "from {0}","з {0}"
 "Hired","Прийнято"
+"Export to Excel","Експорт в Excel"
+"Attendance Sheet: {0}, {1} — {2}","Табель відвідуваності: {0}, {1} — {2}"
+"Summary","Підсумок"
+"Nothing to export for this period.","За цей період нема чого експортувати."
+"Not permitted to read this report","Немає доступу до цього звіту"
