@@ -3,6 +3,8 @@
 
 const METHOD = "hrms.hr.page.attendance_sheet.attendance_sheet";
 
+const EXPORT_METHOD = "hrms.hr.attendance_export.download_sheet";
+
 const ABBR_CONTEXT = "Attendance Sheet Abbreviation";
 
 const DAY_CONTEXT = "Day of Week Abbreviation";
@@ -98,9 +100,23 @@ class AttendanceSheet {
 			change: () => this.render(),
 		});
 
+		this.page.add_menu_item(__("Export to Excel"), () => this.export_sheet());
+
 		// set_input rather than set_value: the default must not fire a refresh of its
 		// own before the page has asked for its data once
 		this.month.set_input(this.month.df.default);
+	}
+
+	// the file is built and named by the server, so it is asked for with a form post
+	// rather than a call: what comes back is the workbook itself, not a payload to unpack
+	export_sheet() {
+		const { from_date, to_date } = this.period;
+
+		open_url_post(`/api/method/${EXPORT_METHOD}`, {
+			company: this.company.get_value(),
+			from_date,
+			to_date,
+		});
 	}
 
 	make_body() {
