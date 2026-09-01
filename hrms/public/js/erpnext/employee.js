@@ -16,7 +16,7 @@ frappe.ui.form.on("Employee", {
 		// inside the child table, so the query is set on the field itself.
 		frm.set_query("attendance_sheet_extra_employees", function (doc) {
 			return {
-				query: "hrms.hr.page.attendance_sheet.attendance_sheet.extra_employee_query",
+				query: "erpnext.payroll_ua.page.attendance_sheet.attendance_sheet.extra_employee_query",
 				filters: { manager: doc.name },
 			};
 		});

@@ -16,7 +16,7 @@ from frappe.query_builder.functions import Extract, Sum
 from frappe.utils import cint, cstr, flt, formatdate, getdate
 from frappe.utils.nestedset import get_descendants_of
 
-from hrms.hr.attendance_marks import (
+from erpnext.payroll_ua.attendance_marks import (
 	STATUS_META,
 	get_abbr,
 	get_color,
@@ -24,6 +24,7 @@ from hrms.hr.attendance_marks import (
 	get_leave_abbreviations,
 	get_unpaid_leave_types,
 )
+
 from hrms.hr.doctype.attendance_sheet_approval.attendance_sheet_approval import get_approved_periods
 from hrms.utils import date_diff, get_date_range
 

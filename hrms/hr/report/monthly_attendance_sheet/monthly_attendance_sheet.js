@@ -204,7 +204,7 @@ function stick_the_name(columns) {
 // than a call: what comes back is the workbook itself, not a payload to unpack
 function add_export_button(report) {
 	report.page.add_inner_button(__("Export to Excel"), () => {
-		open_url_post("/api/method/hrms.hr.attendance_export.download_report", {
+		open_url_post("/api/method/erpnext.payroll_ua.attendance_export.download_report", {
 			filters: JSON.stringify(frappe.query_report.get_filter_values()),
 		});
 	});
