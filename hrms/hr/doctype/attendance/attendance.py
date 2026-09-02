@@ -43,9 +43,7 @@ class Attendance(Document):
 	def validate(self):
 		from erpnext.controllers.status_updater import validate_status
 
-		validate_status(
-			self.status, ["Present", "Absent", "Sick Leave", "On Leave", "Half Day", "Work From Home"]
-		)
+		validate_status(self.status, ["Present", "Absent", "On Leave", "Half Day", "Work From Home"])
 		validate_active_employee(self.employee)
 		self.validate_attendance_date()
 		self.validate_duplicate_record()
@@ -161,6 +159,8 @@ class Attendance(Document):
 			frappe.qb.from_(LeaveApplication)
 			.select(
 				LeaveApplication.leave_type,
+				LeaveApplication.half_day,
+				LeaveApplication.half_day_date,
 				LeaveApplication.name,
 			)
 			.where(
@@ -176,15 +176,25 @@ class Attendance(Document):
 			for d in leave_record:
 				self.leave_type = d.leave_type
 				self.leave_application = d.name
-				self.status = "On Leave"
-				frappe.msgprint(
-					_("Employee {0} is on Leave on {1}").format(
-						self.employee, format_date(self.attendance_date)
+				if d.half_day_date == getdate(self.attendance_date):
+					self.status = "Half Day"
+					frappe.msgprint(
+						_("Employee {0} on Half day on {1}").format(
+							self.employee, format_date(self.attendance_date)
+						)
 					)
-				)
+				else:
+					self.status = "On Leave"
+					frappe.msgprint(
+						_("Employee {0} is on Leave on {1}").format(
+							self.employee, format_date(self.attendance_date)
+						)
+					)
 
-		if self.status == "On Leave":
+		if self.status in ("On Leave", "Half Day"):
 			if not leave_record:
+				self.modify_half_day_status = 0
+				self.half_day_status = "Absent"
 				frappe.msgprint(
 					_("No leave record found for employee {0} on {1}").format(
 						self.employee, format_date(self.attendance_date)
