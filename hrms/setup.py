@@ -229,24 +229,6 @@ def get_custom_fields():
 				"insert_after": "health_insurance_provider",
 			},
 			{
-				"fieldname": "attendance_sheet_section",
-				"fieldtype": "Section Break",
-				"label": _("Attendance Sheet"),
-				"insert_after": "default_shift",
-			},
-			{
-				"description": _(
-					"Employees this one fills the attendance sheet for on top of their direct reports. "
-					"They are listed first in the sheet."
-				),
-				"fieldname": "attendance_sheet_extra_employees",
-				"fieldtype": "Table MultiSelect",
-				"ignore_user_permissions": 1,
-				"label": _("Additional Employees in Attendance Sheet"),
-				"options": "Attendance Sheet Extra Employee",
-				"insert_after": "attendance_sheet_section",
-			},
-			{
 				"fieldname": "approvers_section",
 				"fieldtype": "Section Break",
 				"label": _("Approvers"),
@@ -294,19 +276,6 @@ def get_custom_fields():
 				"label": _("Payroll Cost Center"),
 				"options": "Cost Center",
 				"insert_after": "salary_cb",
-			},
-		],
-		"Leave Type": [
-			{
-				"description": _(
-					"Shown in the attendance sheet on the days of this leave. "
-					"Days of a leave without an abbreviation are marked as leave in general."
-				),
-				"fieldname": "attendance_sheet_abbr",
-				"fieldtype": "Data",
-				"label": _("Attendance Sheet Abbreviation"),
-				"length": 5,
-				"insert_after": "leave_type_name",
 			},
 		],
 		"Project": [

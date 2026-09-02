@@ -118,7 +118,7 @@ def update_employee_transfer(doc, method=None):
 
 
 @frappe.whitelist()
-def get_timeline_data(doctype: str, name: str) -> dict:
+def get_timeline_data(doctype, name):
 	"""Return timeline for attendance"""
 	from frappe.desk.notifications import get_open_count
 
@@ -133,7 +133,7 @@ def get_timeline_data(doctype: str, name: str) -> dict:
 			select unix_timestamp(attendance_date), count(*)
 			from `tabAttendance` where employee=%s
 			and attendance_date > date_sub(curdate(), interval 1 year)
-			and status = 'Present'
+			and status in ('Present', 'Half Day')
 			group by attendance_date""",
 			name,
 		)
