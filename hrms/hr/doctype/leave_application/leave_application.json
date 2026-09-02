@@ -120,16 +120,13 @@
    "default": "0",
    "fieldname": "half_day",
    "fieldtype": "Check",
-   "hidden": 1,
-   "label": "Half Day",
-   "read_only": 1
+   "label": "Half Day"
   },
   {
+   "depends_on": "eval:doc.half_day && doc.from_date && doc.to_date && (doc.from_date != doc.to_date)",
    "fieldname": "half_day_date",
    "fieldtype": "Date",
-   "hidden": 1,
-   "label": "Half Day Date",
-   "read_only": 1
+   "label": "Half Day Date"
   },
   {
    "fieldname": "total_leave_days",
